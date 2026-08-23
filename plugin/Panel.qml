@@ -514,7 +514,7 @@ Panel {
             Text {
               visible: root.dictationInstalled && root.dictation.parakeetNeedsSudo === true
               width: parent.width
-              text: "Parakeet (Dutch + English) needs one sudo step: rerun omalexia/install.sh in a terminal."
+              text: "Parakeet (Dutch + English) needs one sudo step: rerun install.sh in a terminal."
               color: root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption

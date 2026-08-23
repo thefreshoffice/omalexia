@@ -297,7 +297,7 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
       </div>
       <div class="actions">
         <button class="button" type="button" id="heroRead">Read this page aloud</button>
-        <a class="button secondary" href="https://github.com/husense/omarchy-standard">Follow the build on GitHub →</a>
+        <a class="button secondary" href="https://github.com/husense/omalexia">Follow the build on GitHub →</a>
       </div>
       <div class="keys" aria-label="The two keys">
         <div><kbd>F9</kbd> talk</div>
@@ -390,8 +390,8 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
       <p class="eyebrow">Try it</p>
       <h2>On an Omarchy machine, tonight.</h2>
       <div class="cmd" id="cmd">
-        <pre><span class="prompt">$ </span>git clone https://github.com/husense/omarchy-standard.git
-<span class="prompt">$ </span>cd omarchy-standard &amp;&amp; ./omalexia/install.sh</pre>
+        <pre><span class="prompt">$ </span>git clone https://github.com/husense/omalexia.git
+<span class="prompt">$ </span>cd omalexia &amp;&amp; ./install.sh</pre>
         <button class="button secondary" type="button" id="copyBtn">Copy</button>
       </div>
       <div class="copied" id="copied" aria-live="polite"></div>
@@ -419,7 +419,7 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
     <div>Omalexia is built by <a href="https://husense.io/">Husense</a> on top of Omarchy Linux. Everything on this page is a statement of intent; the software is in active development.</div>
     <div>Independent project. Not affiliated with, sponsored by, or endorsed by Omarchy or 37signals.</div>
     <div class="links">
-      <a href="https://github.com/husense/omarchy-standard">GitHub</a>
+      <a href="https://github.com/husense/omalexia">GitHub</a>
       <a href="https://omarchy.org/">Omarchy</a>
       <a href="https://omarchyplugins.com/">Omarchy plugins</a>
     </div>
@@ -522,7 +522,7 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
   var copyBtn = document.getElementById('copyBtn');
   var copied = document.getElementById('copied');
   copyBtn.addEventListener('click', function () {
-    var text = 'git clone https://github.com/husense/omarchy-standard.git\ncd omarchy-standard && ./omalexia/install.sh';
+    var text = 'git clone https://github.com/husense/omalexia.git\ncd omalexia && ./install.sh';
     function done(ok) { copied.textContent = ok ? 'Command copied.' : 'Select the command and copy it yourself.'; setTimeout(function () { copied.textContent = ''; }, 2500); }
     if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(text).then(function () { done(true); }, function () { done(false); });
     else done(false);

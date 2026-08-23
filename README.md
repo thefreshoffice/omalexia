@@ -1,8 +1,14 @@
 # Omalexia
 
-Omarchy for dyslexic readers. Opt-in; not part of the baseline `install.sh`.
+Omarchy for dyslexic readers. An opt-in profile on top of an
+[Omarchy](https://omarchy.org/) install (and, at Husense, on top of the
+[company baseline](https://github.com/husense/omarchy-standard)).
 
-    ./omalexia/install.sh
+    git clone https://github.com/husense/omalexia.git
+    cd omalexia
+    ./install.sh
+
+Safe to re-run. Package steps need `sudo`, so run it from a terminal.
 
 Three things matter most for a dyslexic user of a computer: hearing text
 instead of decoding it, speaking text instead of spelling it, and not having

@@ -13,14 +13,14 @@ on Linux goes through Speech Dispatcher, i.e. the Omalexia voice.
 ## Hosting
 
 **GitHub Pages (free).** GitHub Pages serves from a repository root or a
-`docs/` folder, not from `omalexia/site/`. Two options:
+`docs/` folder, not from `site/`. Two options:
 
 1. A small workflow that publishes this folder:
 
     ```yaml
     # .github/workflows/site.yml
     name: site
-    on: { push: { branches: [main], paths: ['omalexia/site/**'] } }
+    on: { push: { branches: [main], paths: ['site/**'] } }
     permissions: { pages: write, id-token: write, contents: read }
     jobs:
       deploy:
@@ -29,17 +29,17 @@ on Linux goes through Speech Dispatcher, i.e. the Omalexia voice.
         steps:
           - uses: actions/checkout@v4
           - uses: actions/upload-pages-artifact@v3
-            with: { path: omalexia/site }
+            with: { path: site }
           - id: deploy
             uses: actions/deploy-pages@v4
     ```
    Then Settings → Pages → Source: GitHub Actions. Add a `CNAME` file here
    for a custom domain (e.g. `omalexia.husense.io`).
 
-2. Or a separate `husense/omalexia.dev`-style repo with `index.html` at its root.
+2. Or move `site/index.html` to a `docs/` folder and pick "Deploy from a branch".
 
 **Cloudflare Pages / Netlify (free).** Point the project at this repo with
-build command empty and output directory `omalexia/site`.
+build command empty and output directory `site`.
 
 **A Husense server.** Any static server works; for nginx:
 
@@ -53,7 +53,7 @@ server {
 }
 ```
 
-Deploy with `rsync -av --delete omalexia/site/ server:/var/www/omalexia/`.
+Deploy with `rsync -av --delete site/ server:/var/www/omalexia/`.
 
 ## Editing
 

@@ -1,7 +1,7 @@
 # Omalexia bar widget
 
 `husense.omalexia` — an Omarchy shell plugin (bar widget + panel) for
-[Omalexia](../README.md). Installed by `omalexia/install.sh`, which copies
+[Omalexia](../README.md). Installed by `install.sh`, which copies
 this directory to `~/.config/omarchy/plugins/husense.omalexia/` and enables
 it in the bar's right section.
 

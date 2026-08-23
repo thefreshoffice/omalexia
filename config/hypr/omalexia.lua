@@ -1,7 +1,7 @@
 -- Omalexia: dyslexia-friendly keys and look for Omarchy.
 --
 -- Installed to ~/.config/hypr/omalexia.lua and loaded from hyprland.lua by
--- omalexia/install.sh. Everything here layers on top of Omarchy's defaults;
+-- install.sh. Everything here layers on top of Omarchy's defaults;
 -- remove the require line (or run `omalexia off`) to switch it off.
 --
 -- The mental model for the keys is: F9 = talk, F10 = listen.

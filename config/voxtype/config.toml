@@ -13,7 +13,7 @@ state_file = "auto"
 # Parakeet TDT 0.6B v3 (NVIDIA, ONNX) — punctuation and capitalisation built
 # in, 25 European languages including Dutch and English with automatic
 # language detection, and far more accurate than Whisper base.en while
-# still fast on a CPU. omalexia/install.sh downloads the model and switches
+# still fast on a CPU. install.sh downloads the model and switches
 # the voxtype binary to its ONNX variant; if that fails it sets engine back
 # to "whisper".
 engine = "parakeet"

@@ -133,7 +133,7 @@ set_mono() {
 apply() {
   local key="$1" family="${SANS[$1]}"
   if ! font_present "$family"; then
-    notify "Font not installed" "$family is missing. Run omalexia/install.sh."
+    notify "Font not installed" "$family is missing. Run ./install.sh from the omalexia checkout."
     echo "Font '$family' not installed." >&2
     exit 1
   fi

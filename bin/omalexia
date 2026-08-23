@@ -68,7 +68,7 @@ status() {
 
 dictation() {
   local sub="${1:-status}"
-  command -v voxtype >/dev/null || { echo "voxtype is not installed (run omalexia/install.sh)" >&2; exit 1; }
+  command -v voxtype >/dev/null || { echo "voxtype is not installed (run ./install.sh from the omalexia checkout)" >&2; exit 1; }
   case "$sub" in
     status) voxtype status; systemctl --user status voxtype.service --no-pager | head -n 5 ;;
     model) omarchy-voxtype-model ;;

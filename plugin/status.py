@@ -391,7 +391,7 @@ def do_action(action: str, arg: str = "") -> None:
         detached(["omarchy-menu", "toggle", "omalexia"])
     elif action == "install":
         detached(["omarchy-launch-floating-terminal-with-presentation",
-                  "echo 'Run ./omalexia/install.sh from the husense-omarchy-standard checkout.'; read -r"])
+                  "echo 'Run ./install.sh from the omalexia checkout.'; read -r"])
     else:
         raise SystemExit(f"unknown action: {action}")
 

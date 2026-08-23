@@ -212,6 +212,10 @@ section + section { border-top: 1px solid var(--line); }
   text-wrap: balance;
 }
 
+/* ---- shoutout ------------------------------------------------------------------ */
+.shoutout p { color: var(--text); }
+.shoutout p + p { color: var(--muted); }
+
 /* ---- priorities --------------------------------------------------------------- */
 .cards { display: grid; gap: 1rem; grid-template-columns: 1fr; margin-top: 0.5rem; }
 @media (min-width: 46rem) { .cards { grid-template-columns: 1fr 1fr; } }
@@ -312,6 +316,15 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
       <p class="eyebrow">The goal</p>
       <blockquote>Make the best operating system for dyslexics and alike: not an accessibility setting buried in a menu, but the default.</blockquote>
       <p>Most computers treat reading as free and speaking as a feature. For a dyslexic person it is the other way round: decoding text costs effort every minute of the day, and the voice is the fast path. Omalexia starts from that. Hearing text, saying text and seeing text calmly are first-class, one key each, and they work in every app, the terminal included.</p>
+    </div>
+  </section>
+
+  <section class="shoutout">
+    <div class="wrap stack-lg">
+      <p class="eyebrow">Credit where it is due</p>
+      <h2>Omarchy already does half the work.</h2>
+      <p>Before we added a single line, the <a href="https://omarchy.org/">Omarchy</a> team had already built something that helps dyslexic people every day. Tiling windows mean nothing overlaps and nothing hides: every window has its place, the keyboard moves you between them, and the screen stays tidy without effort. One consistent theme runs through every app. There is no clutter to decode and no hunting for the window you lost.</p>
+      <p>That focus is not only calmer, it is more fun. Omarchy is fast, opinionated and beautifully put together, and it makes the computer feel like a tool you own rather than a place you get lost in. Thank you, DHH and everyone who builds Omarchy. Omalexia exists because there was such a good foundation to build on.</p>
     </div>
   </section>
 

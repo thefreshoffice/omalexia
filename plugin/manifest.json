@@ -1,9 +1,9 @@
 {
   "schemaVersion": 1,
-  "id": "husense.omalexia",
+  "id": "thefreshoffice.omalexia",
   "name": "Omalexia",
   "version": "0.1.0",
-  "author": "Husense",
+  "author": "Michael de By | The Fresh Office",
   "description": "Omalexia in the Omarchy bar: read-aloud and dictation state at a glance, with a panel to read, dictate, pick voices and set the reading layout.",
   "kinds": ["bar-widget"],
   "entryPoints": {

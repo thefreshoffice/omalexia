@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# omalexia — dyslexia-friendly Omarchy. One command in front of the parts.
+# omalexia: dyslexia-friendly Omarchy. One command in front of the parts.
 #
 #   omalexia say ...          read aloud (see: omalexia say --help)
 #   omalexia stop             stop reading
@@ -23,7 +23,7 @@ shift || true
 
 keys() {
   cat <<'EOF'
-Omalexia keys — F9 = talk, F10 = listen
+Omalexia keys: F9 = talk, F10 = listen
 
   Listen
     F10                 read the highlighted text aloud; press again to stop

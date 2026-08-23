@@ -1,4 +1,4 @@
-  // omalexia:begin — managed by install.sh, edits between the markers are replaced
+  // omalexia:begin, managed by install.sh, edits between the markers are replaced
   "omalexia": {"icon":"󰗊","label":"Omalexia","aliases":["read","reading","dyslexia","accessibility","a11y"]},
   "omalexia.read": {"icon":"󰕾","label":"Read Aloud"},
   "omalexia.read.selection": {"icon":"󰗊","label":"Read Selection  (F10)","action":"omalexia-say selection"},

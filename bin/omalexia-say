@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""omalexia-say — read text aloud with the local Omalexia voice.
+"""omalexia-say: read text aloud with the local Omalexia voice.
 
 Usage:
   omalexia-say [--lang en|nl|auto] [--wait] TEXT...   speak the given text

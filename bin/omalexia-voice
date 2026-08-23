@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""omalexia-voice — manage the local reading voices.
+"""omalexia-voice: manage the local reading voices.
 
 Usage:
   omalexia-voice list                       installed voices and the current choice

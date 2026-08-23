@@ -37,7 +37,7 @@ backup_if_differs() {
 }
 
 # ---------------------------------------------------------------------------
-say "Omalexia — packages"
+say "Omalexia: packages"
 # ---------------------------------------------------------------------------
 
 if $skip_pkgs; then
@@ -67,7 +67,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "Omalexia — commands"
+say "Omalexia: commands"
 # ---------------------------------------------------------------------------
 
 mkdir -p "$BIN_DIR" "$DATA_DIR" "$STATE_DIR" "$CONFIG_DIR"
@@ -82,15 +82,22 @@ note "installed $(find bin -maxdepth 1 -type f -printf '%f ')to ~/.local/bin"
 [[ -f $CONFIG_DIR/replacements.txt ]] || install -m 644 config/replacements.txt "$CONFIG_DIR/replacements.txt"
 
 # ---------------------------------------------------------------------------
-say "Omalexia — bar plugin"
+say "Omalexia: bar plugin"
 # ---------------------------------------------------------------------------
 
 # Copied into the user plugin directory (Omarchy's validator refuses symlinked
 # plugin folders). Re-running this installer updates it; the shell hot-reloads
 # plugin files on save. Anything in the way that is not ours is left alone.
-plugin_id="husense.omalexia"
+plugin_id="thefreshoffice.omalexia"
 plugin_dest="$HOME/.config/omarchy/plugins/$plugin_id"
 mkdir -p "$(dirname "$plugin_dest")"
+# The widget was first published as husense.omalexia; retire that copy.
+old_plugin="$HOME/.config/omarchy/plugins/husense.omalexia"
+if [[ -e $old_plugin ]]; then
+  omarchy plugin disable husense.omalexia >/dev/null 2>&1 || true
+  rm -rf "$old_plugin"
+  note "removed the old husense.omalexia widget"
+fi
 if [[ -L $plugin_dest ]]; then
   rm -f "$plugin_dest"
 fi
@@ -118,7 +125,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "Omalexia — voices"
+say "Omalexia: voices"
 # ---------------------------------------------------------------------------
 
 if /usr/bin/python3 -c 'import piper' 2>/dev/null; then
@@ -139,7 +146,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "Omalexia — read-aloud daemon"
+say "Omalexia: read-aloud daemon"
 # ---------------------------------------------------------------------------
 
 mkdir -p "$HOME/.config/systemd/user"
@@ -154,7 +161,7 @@ fi
 note "omalexia-speakd: $(systemctl --user is-active omalexia-speakd.service || true)"
 
 # ---------------------------------------------------------------------------
-say "Omalexia — Speech Dispatcher (Firefox Narrate, Orca, spd-say)"
+say "Omalexia: Speech Dispatcher (Firefox Narrate, Orca, spd-say)"
 # ---------------------------------------------------------------------------
 
 sd_dir="$HOME/.config/speech-dispatcher"
@@ -175,7 +182,7 @@ fi
 systemctl --user try-restart speech-dispatcher.service 2>/dev/null || true
 
 # ---------------------------------------------------------------------------
-say "Omalexia — Hyprland keys and look"
+say "Omalexia: Hyprland keys and look"
 # ---------------------------------------------------------------------------
 
 hypr_dir="$HOME/.config/hypr"
@@ -200,7 +207,7 @@ if errors="$(hyprctl configerrors 2>/dev/null)" && [[ -n $errors && $errors != "
 fi
 
 # ---------------------------------------------------------------------------
-say "Omalexia — menu"
+say "Omalexia: menu"
 # ---------------------------------------------------------------------------
 
 menu="$HOME/.config/omarchy/extensions/omarchy-menu.jsonc"
@@ -223,7 +230,7 @@ omarchy-menu refresh >/dev/null 2>&1 || true
 note "Omalexia entry added to the Omarchy menu (Super+Alt+A)"
 
 # ---------------------------------------------------------------------------
-say "Omalexia — dictation (voxtype)"
+say "Omalexia: dictation (voxtype)"
 # ---------------------------------------------------------------------------
 
 if command -v voxtype >/dev/null; then
@@ -268,7 +275,7 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-say "Omalexia — reading font and text size"
+say "Omalexia: reading font and text size"
 # ---------------------------------------------------------------------------
 
 if [[ ! -f $FIRST_RUN_MARKER ]]; then

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# omalexia-font — switch the whole desktop to a reading-friendly typeface.
+# omalexia-font: switch the whole desktop to a reading-friendly typeface.
 #
 #   omalexia-font atkinson      Atkinson Hyperlegible (default: distinct letter
 #                               forms, made for low-vision readers; official repo)

@@ -7,7 +7,7 @@ inline. Copy the file anywhere that serves static files.
 The page practises what it preaches: a plain, distinct typeface at 19 px with
 1.6 line height and a ~62-character measure, a paper (off-white) theme and a
 night theme, a Calm mode (lower contrast, more space, no motion), text size
-controls, and a Read-aloud button that uses the browser's own speech — which
+controls, and a Read-aloud button that uses the browser's own speech, which
 on Linux goes through Speech Dispatcher, i.e. the Omalexia voice.
 
 ## Hosting
@@ -34,19 +34,19 @@ on Linux goes through Speech Dispatcher, i.e. the Omalexia voice.
             uses: actions/deploy-pages@v4
     ```
    Then Settings → Pages → Source: GitHub Actions. Add a `CNAME` file here
-   for a custom domain (e.g. `omalexia.husense.io`).
+   for a custom domain (e.g. `omalexia.example.com`).
 
 2. Or move `site/index.html` to a `docs/` folder and pick "Deploy from a branch".
 
 **Cloudflare Pages / Netlify (free).** Point the project at this repo with
 build command empty and output directory `site`.
 
-**A Husense server.** Any static server works; for nginx:
+**Your own server.** Any static server works; for nginx:
 
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name omalexia.husense.io;
+    server_name omalexia.example.com;
     root /var/www/omalexia;
     index index.html;
     add_header Cache-Control "public, max-age=600";

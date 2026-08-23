@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
-# omalexia-tint — warm "paper" tint for the whole screen.
+# omalexia-tint: warm "paper" tint for the whole screen.
 #
 # The British Dyslexia Association advises against bright white backgrounds.
 # Themes handle most of that, but web pages and PDFs are still white; this
 # warms every pixel via hyprsunset, like reading on cream paper. It is a
-# comfort setting, not a treatment — turn it off if it does nothing for you.
+# comfort setting, not a treatment; turn it off if it does nothing for you.
 #
 # Usage: omalexia-tint [toggle|on|off|status]
 set -euo pipefail

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""omalexia-dictation-cleanup — tidy dictated text before Voxtype types it.
+"""omalexia-dictation-cleanup: tidy dictated text before Voxtype types it.
 
 Reads the transcription on stdin, writes the cleaned text on stdout. Voxtype
 calls this through [output.post_process] and falls back to the raw text if it
@@ -12,7 +12,7 @@ fails, so this stays conservative and fast (no network, no models):
     (one "spoken = written" pair per line, case-insensitive)
 
 If an `omalexia-dictation-llm` executable exists on PATH it is tried first
-with a short timeout — a hook for optional local LLM clean-up (e.g. ollama).
+with a short timeout, a hook for optional local LLM clean-up (e.g. ollama).
 """
 
 from __future__ import annotations

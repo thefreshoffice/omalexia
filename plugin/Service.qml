@@ -41,7 +41,7 @@ Item {
     if (transcribing) return "Typing what you said…"
     if (speaking) return read.text ? "Reading: " + String(read.text) : "Reading aloud"
     if (!daemonActive) return "Read-aloud is off"
-    return "Ready — F10 reads, F9 talks"
+    return "Ready. F10 reads, F9 talks"
   }
 
   function setting(name, fallback) {

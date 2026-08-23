@@ -8,7 +8,7 @@ import qs.Ui
 // right click reads the selection (or stops), middle click toggles dictation.
 BarWidget {
   id: root
-  moduleName: "husense.omalexia"
+  moduleName: "thefreshoffice.omalexia"
 
   readonly property var service: panelLoader.item ? panelLoader.item.service : null
   readonly property bool speaking: service ? service.speaking : false

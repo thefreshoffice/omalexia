@@ -15,8 +15,8 @@ import qs.Ui
 // Esc closes, Tab switches to the neighbouring bar panel.
 Panel {
   id: root
-  moduleName: "husense.omalexia"
-  ipcTarget: "husense.omalexia"
+  moduleName: "thefreshoffice.omalexia"
+  ipcTarget: "thefreshoffice.omalexia"
   manageIpc: false
 
   property var anchorItem: null
@@ -205,15 +205,15 @@ Panel {
   ]
   readonly property var engineOptions: {
     var options = []
-    if (dictation.parakeetAvailable) options.push({ value: "parakeet", label: "Parakeet TDT v3 — Dutch + English" })
-    if (dictation.whisperAvailable) options.push({ value: "whisper", label: "Whisper base.en — English" })
+    if (dictation.parakeetAvailable) options.push({ value: "parakeet", label: "Parakeet TDT v3 (Dutch + English)" })
+    if (dictation.whisperAvailable) options.push({ value: "whisper", label: "Whisper base.en (English)" })
     if (options.length === 0) options.push({ value: String(dictation.engine || "whisper"), label: String(dictation.engine || "whisper") })
     return options
   }
   readonly property var voiceEnOptions: {
     var options = (read.voicesEn || []).slice()
-    if (read.kokoroInstalled) options.push({ value: "kokoro", label: "Kokoro — premium, slower start" })
-    else options.push({ value: "kokoro", label: "Kokoro — premium (installs ~350 MB)" })
+    if (read.kokoroInstalled) options.push({ value: "kokoro", label: "Kokoro, premium (slower start)" })
+    else options.push({ value: "kokoro", label: "Kokoro, premium (installs ~350 MB)" })
     return options
   }
   readonly property string voiceEnValue: read.engineEn === "kokoro" ? "kokoro" : String(read.voiceEn || "")

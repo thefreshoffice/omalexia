@@ -3,6 +3,6 @@
 # Applied by omalexia-dictation-cleanup after every transcription.
 #
 # Examples:
-#   hue sense = Husense
+#   fresh office = The Fresh Office
 #   my email = michael@example.com
 #   next cloud = Nextcloud

@@ -1,5 +1,5 @@
 #!/usr/bin/python3
-"""omalexia-speakd — persistent, local text-to-speech daemon.
+"""omalexia-speakd: persistent, local text-to-speech daemon.
 
 Keeps the Piper voices loaded in memory so that speech starts within about a
 tenth of a second of a request. Listens on a Unix socket in $XDG_RUNTIME_DIR
@@ -292,7 +292,7 @@ class Daemon:
 
     def set_state(self, state: str):
         # Written in place (not atomically renamed) so inotify watchers on
-        # the path — the bar plugin, `omalexia-say follow` — keep their watch.
+        # the path (the bar plugin, `omalexia-say follow`) keep their watch.
         RUNTIME.mkdir(parents=True, exist_ok=True)
         with open(STATE_PATH, "w") as f:
             f.write(state + "\n")

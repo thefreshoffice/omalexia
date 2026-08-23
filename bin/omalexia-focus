@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# omalexia-focus — reading mode for the focused window.
+# omalexia-focus: reading mode for the focused window.
 #
 # Tiled windows on a wide monitor become very long lines of text, which is
 # hard to read for dyslexic readers (the BDA recommends 60–70 characters per

@@ -1,8 +1,7 @@
 # Omalexia
 
-Omarchy for dyslexic readers. An opt-in profile on top of an
-[Omarchy](https://omarchy.org/) install (and, at Husense, on top of the
-[company baseline](https://github.com/husense/omarchy-standard)).
+Omarchy for dyslexic readers, by Michael de By | The Fresh Office. An opt-in profile
+on top of an [Omarchy](https://omarchy.org/) install.
 
     git clone https://github.com/thefreshoffice/omalexia.git
     cd omalexia
@@ -28,7 +27,7 @@ with one key each. **F9 = talk, F10 = listen.**
 | `Super + Shift + R` | Warm "paper" tint on/off. |
 | `Super + Ctrl + Backspace` | Stops a lone window stretching across a wide monitor. (Omarchy default, switched on) |
 | `Super + Ctrl + Z` | Screen zoom. (Omarchy default) |
-| `Super + Alt + A` | The Omalexia menu — everything above, plus voices, fonts, text size. |
+| `Super + Alt + A` | The Omalexia menu: everything above, plus voices, fonts, text size. |
 
 `omalexia keys` prints this; `omalexia status` shows what is on.
 
@@ -36,7 +35,7 @@ with one key each. **F9 = talk, F10 = listen.**
 
 An Omalexia widget (an open book) sits in the bar's right section: it
 brightens while reading aloud, turns urgent while dictation listens, and
-opens a panel with everything above as buttons and switches — read, stop,
+opens a panel with everything above as buttons and switches: read, stop,
 speed, voices, dictation engine, reading mode, tint, font, text size. Right
 click reads the selection, middle click toggles dictation. See
 [`plugin/README.md`](plugin/README.md).
@@ -46,7 +45,7 @@ click reads the selection, middle click toggles dictation. See
 ### Listen: `omalexia-speakd` + `omalexia-say`
 
 A small daemon keeps two [Piper](https://github.com/OHF-Voice/piper1-gpl)
-neural voices loaded — English and Dutch — so speech starts about 0.1 s
+neural voices loaded (English and Dutch), so speech starts about 0.1 s
 after the key press. The language is detected from the text, so a Dutch
 e-mail and an English doc both just work. It streams sentence by sentence
 through PipeWire and stops the instant you ask.
@@ -55,7 +54,7 @@ Before speaking it unwraps hard line breaks (e-mails, terminals), drops
 markdown symbols, bullets and `#` headings, and reads URLs as their host
 name. F10 uses the Wayland primary selection (whatever is highlighted); for
 the rare app that does not publish one it sends `Ctrl+C` and restores the
-clipboard afterwards — never in a terminal, where `Ctrl+C` means interrupt.
+clipboard afterwards, never in a terminal, where `Ctrl+C` means interrupt.
 
 **It works everywhere** because it is also the system voice: the installer
 registers the daemon as the default [Speech Dispatcher](https://wiki.archlinux.org/title/Speech_dispatcher)
@@ -64,7 +63,7 @@ and any program using the Web Speech API get the same voice, and cancelling
 in the program stops playback.
 
 Voices (`omalexia voice list`): the defaults are `en_US-lessac-medium` and
-`nl_NL-pim-medium`. "medium" voices are the right choice on a CPU — on the
+`nl_NL-pim-medium`. "medium" voices are the right choice on a CPU: on the
 reference laptop (Arrow Lake, no NVIDIA) they start in 0.08–0.13 s, while
 "high" voices take ~1 s per sentence for a modestly richer sound.
 `omalexia voice set en en_GB-alan-medium` swaps a voice (downloads it if
@@ -94,33 +93,33 @@ from 60 s to 5 minutes, and pipes every transcription through
 `omalexia-dictation-cleanup`: filler words in English and Dutch
 (`uh`, `um`, `ehm`, `euh`…), doubled words, a capital letter, a full stop,
 and your own **personal word list** in `~/.config/omalexia/replacements.txt`
-(`hue sense = Husense`). It is rule-based and takes milliseconds; an
+(`fresh office = The Fresh Office`). It is rule-based and takes milliseconds; an
 `omalexia-dictation-llm` executable on PATH is used first if you want to add
 a local LLM pass later.
 
 ### Look
 
-- **Reading font** — `omalexia font atkinson|opendyslexic|inter|reset` sets
+- **Reading font**: `omalexia font atkinson|opendyslexic|inter|reset` sets
   fontconfig's sans-serif/system-ui, the GTK interface and document fonts,
   Hyprland's own text, the terminal font (a Nerd-Font-patched companion, so
   icons keep working) and Chromium's page fonts plus a 14 px minimum in one
   go. The default is **Atkinson Hyperlegible** (Braille Institute; distinct
   letterforms, official Arch package). OpenDyslexic is one command away, but
   read the research note below before assuming it helps.
-- **Text size** — the installer sets `omarchy display text size 14` once
+- **Text size**: the installer sets `omarchy display text size 14` once
   (shell, GTK apps and terminals together); the menu offers 12–18.
-- **Reading mode** (`Super + R`) — floats the focused window at
+- **Reading mode** (`Super + R`): floats the focused window at
   `min(1100 px, 60 % of the monitor)` width, 94 % height, centred; again to
   re-tile. Inactive windows are dimmed 12 % so the eye lands on the right one.
-- **Narrow single window** — Omarchy's `single-window-aspect-ratio` toggle
+- **Narrow single window**: Omarchy's `single-window-aspect-ratio` toggle
   is switched on: a lone window on a wide monitor becomes square-ish instead
   of a 2400 px text line.
-- **Paper tint** (`Super + Shift + R`) — 4900 K / 92 % gamma via hyprsunset.
+- **Paper tint** (`Super + Shift + R`): 4900 K / 92 % gamma via hyprsunset.
   Comfort, not treatment (see below).
-- **Cream theme** — `flexoki-light` is Omarchy's stock off-white theme and
+- **Cream theme**: `flexoki-light` is Omarchy's stock off-white theme and
   matches the BDA advice (dark text on cream, never pure white); the menu
   has a shortcut. Dark themes are fine too; pick the one that feels calm.
-- **Reduced motion** — `omalexia motion off` disables window animations.
+- **Reduced motion**: `omalexia motion off` disables window animations.
 - Cursor 28 px, Qt accessibility on, OCR set to `eng+nld`, Dutch and English
   spell-check dictionaries (hunspell) for GTK apps and browsers.
 
@@ -133,8 +132,8 @@ a local LLM pass later.
   left-aligned, no italics/underline/caps, dark text on an off-white
   background. Controlled studies (Rello & Baeza-Yates 2013; Wery &
   Diliberto 2017; Kuster et al. 2018) found **no measurable benefit from
-  OpenDyslexic or Dyslexie** over Arial/Helvetica/Verdana — readers tend to
-  prefer the plain fonts — so the default is a well-made plain sans with
+  OpenDyslexic or Dyslexie** over Arial/Helvetica/Verdana (readers tend to
+  prefer the plain fonts), so the default is a well-made plain sans with
   distinct letterforms, and OpenDyslexic is opt-in for people who like it.
 - **Line length** is the one layout rule with solid evidence, hence
   reading mode and the single-window aspect toggle rather than a font trick.
@@ -143,7 +142,7 @@ a local LLM pass later.
 - **TTS engine.** Measured on the reference laptop: Piper medium 0.08–0.13 s
   to first audio per sentence; Piper high ~0.9 s; Kokoro-82M ~0.8 s (English
   only, clearly nicer); Supertonic 3 (the only quality Dutch alternative)
-  ~5 s per sentence on CPU — not usable interactively yet.
+  ~5 s per sentence on CPU, not usable interactively yet.
 - **STT engine.** Parakeet TDT v3 is multilingual, punctuates, and runs
   well on CPU through ONNX; Whisper `large-v3-turbo` would match it on
   accuracy but is several seconds per utterance without a GPU.
@@ -162,7 +161,7 @@ omalexia/
 │   ├── omalexia-focus               reading mode for the focused window
 │   ├── omalexia-tint                paper tint via hyprsunset
 │   └── omalexia-dictation-cleanup   voxtype post-processor
-├── plugin/                          Omarchy shell bar widget + panel (husense.omalexia)
+├── plugin/                          Omarchy shell bar widget + panel (thefreshoffice.omalexia)
 │   ├── manifest.json, BarWidget.qml, Panel.qml, Service.qml
 │   └── status.py                    snapshot + actions helper the QML calls
 ├── site/                            the omalexia announcement page (static, self-contained)
@@ -194,7 +193,7 @@ Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`
 ## Known limits
 
 - Chromium's page fonts are written to its `Preferences` file, which Chromium
-  rewrites on exit — `omalexia font` only touches it while Chromium is closed
+  rewrites on exit, so `omalexia font` only touches it while Chromium is closed
   and tells you otherwise. Chromium's own **Reading mode** side panel
   (font, spacing, colours) is the better tool for long web articles.
 - Hyprland does not share the primary selection with XWayland apps; F10

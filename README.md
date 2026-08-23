@@ -200,3 +200,25 @@ Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`
   falls back to `Ctrl+C` there.
 - There is no per-word highlighting while reading; that needs app support.
 - Kokoro and Piper "high" voices are not instant on CPU; the defaults are.
+
+## Contributing
+
+Omalexia is open source and the goal is simple: the best accessibility add-on
+for Omarchy. Everyone who wants to help is welcome, in whatever way fits:
+
+- Dyslexic readers: tell us what works and what does not. An issue that says
+  "this key did the wrong thing" or "this voice is tiring" is worth more than
+  a feature request.
+- Speech and models: better voices, faster engines, more languages.
+- Fonts, colour and layout: the research notes above are the starting point;
+  bring measurements, not just opinions.
+- Translations of the panel, menu and site.
+- Testing on other hardware, especially machines without a fast CPU.
+
+Open an issue at https://github.com/thefreshoffice/omalexia/issues to talk
+first, or send a pull request straight away. Keep changes local-first,
+reversible with `omalexia off`, and one key away.
+
+## License
+
+MIT. See [LICENSE](LICENSE).

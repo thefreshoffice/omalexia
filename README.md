@@ -159,6 +159,9 @@ omalexia/
 ├── plugin/                          Omarchy shell bar widget + panel (husense.omalexia)
 │   ├── manifest.json, BarWidget.qml, Panel.qml, Service.qml
 │   └── status.py                    snapshot + actions helper the QML calls
+├── site/                            the omalexia announcement page (static, self-contained)
+│   ├── index.html
+│   └── README.md                    hosting: GitHub Pages, Cloudflare/Netlify, or nginx
 └── config/
     ├── hypr/omalexia.lua            keys, dimming, fonts, env  → ~/.config/hypr/omalexia.lua
     ├── voxtype/config.toml          tuned dictation             → ~/.config/voxtype/config.toml

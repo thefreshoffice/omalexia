@@ -1,6 +1,6 @@
 [Unit]
 Description=Omalexia local text-to-speech daemon
-Documentation=https://github.com/husense/omalexia
+Documentation=https://github.com/thefreshoffice/omalexia
 After=pipewire.service graphical-session.target
 PartOf=graphical-session.target
 

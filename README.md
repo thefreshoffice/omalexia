@@ -4,7 +4,7 @@ Omarchy for dyslexic readers. An opt-in profile on top of an
 [Omarchy](https://omarchy.org/) install (and, at Husense, on top of the
 [company baseline](https://github.com/husense/omarchy-standard)).
 
-    git clone https://github.com/husense/omalexia.git
+    git clone https://github.com/thefreshoffice/omalexia.git
     cd omalexia
     ./install.sh
 

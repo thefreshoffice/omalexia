@@ -82,6 +82,42 @@ note "installed $(find bin -maxdepth 1 -type f -printf '%f ')to ~/.local/bin"
 [[ -f $CONFIG_DIR/replacements.txt ]] || install -m 644 config/replacements.txt "$CONFIG_DIR/replacements.txt"
 
 # ---------------------------------------------------------------------------
+say "Omalexia — bar plugin"
+# ---------------------------------------------------------------------------
+
+# Copied into the user plugin directory (Omarchy's validator refuses symlinked
+# plugin folders). Re-running this installer updates it; the shell hot-reloads
+# plugin files on save. Anything in the way that is not ours is left alone.
+plugin_id="husense.omalexia"
+plugin_dest="$HOME/.config/omarchy/plugins/$plugin_id"
+mkdir -p "$(dirname "$plugin_dest")"
+if [[ -L $plugin_dest ]]; then
+  rm -f "$plugin_dest"
+fi
+if [[ -e $plugin_dest && ! -d $plugin_dest/.git ]] && grep -q "\"id\": \"$plugin_id\"" "$plugin_dest/manifest.json" 2>/dev/null; then
+  rm -rf "$plugin_dest"
+fi
+if [[ ! -e $plugin_dest ]]; then
+  mkdir -p "$plugin_dest"
+  cp plugin/manifest.json plugin/*.qml plugin/status.py plugin/README.md "$plugin_dest/"
+  note "installed the bar plugin to $plugin_dest"
+else
+  note "$plugin_dest is not managed by this installer; leaving it"
+fi
+omarchy-shell -q shell rescanPlugins
+if ! grep -q "\"$plugin_id\"" "$HOME/.config/omarchy/shell.json" 2>/dev/null; then
+  enabled=false
+  for _ in 1 2 3 4 5; do
+    sleep 1
+    if omarchy plugin enable "$plugin_id" >/dev/null 2>&1; then enabled=true; break; fi
+  done
+  if $enabled; then note "enabled the Omalexia bar widget (right section)"; else
+    note "could not enable the bar widget yet; run: omarchy plugin enable $plugin_id"; fi
+else
+  note "bar widget already enabled"
+fi
+
+# ---------------------------------------------------------------------------
 say "Omalexia — voices"
 # ---------------------------------------------------------------------------
 

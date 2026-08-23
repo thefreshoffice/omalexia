@@ -1,0 +1,49 @@
+{
+  "schemaVersion": 1,
+  "id": "husense.omalexia",
+  "name": "Omalexia",
+  "version": "0.1.0",
+  "author": "Husense",
+  "description": "Omalexia in the Omarchy bar: read-aloud and dictation state at a glance, with a panel to read, dictate, pick voices and set the reading layout.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Omalexia",
+    "description": "Read aloud, dictate, and tune fonts, text size and reading layout for dyslexic readers.",
+    "category": "Accessibility",
+    "aliases": ["omalexia", "read-aloud", "dyslexia", "a11y"],
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "refreshIntervalSec": 20,
+      "showDictation": true,
+      "showLook": true
+    },
+    "schema": [
+      {
+        "key": "refreshIntervalSec",
+        "type": "integer",
+        "label": "Refresh interval (seconds)",
+        "min": 5,
+        "max": 600,
+        "step": 5,
+        "defaultValue": 20
+      },
+      {
+        "key": "showDictation",
+        "type": "boolean",
+        "label": "Show the Dictation section",
+        "defaultValue": true
+      },
+      {
+        "key": "showLook",
+        "type": "boolean",
+        "label": "Show the Look section",
+        "description": "Fonts, text size, reading mode, tint and motion.",
+        "defaultValue": true
+      }
+    ]
+  }
+}

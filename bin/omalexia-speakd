@@ -291,10 +291,11 @@ class Daemon:
     # -- state -------------------------------------------------------------
 
     def set_state(self, state: str):
+        # Written in place (not atomically renamed) so inotify watchers on
+        # the path — the bar plugin, `omalexia-say follow` — keep their watch.
         RUNTIME.mkdir(parents=True, exist_ok=True)
-        tmp = STATE_PATH.with_suffix(".tmp")
-        tmp.write_text(state + "\n")
-        tmp.replace(STATE_PATH)
+        with open(STATE_PATH, "w") as f:
+            f.write(state + "\n")
 
     def status(self) -> dict:
         speaking = self.worker is not None and self.worker.is_alive()

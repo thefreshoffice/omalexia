@@ -26,6 +26,15 @@ with one key each. **F9 = talk, F10 = listen.**
 
 `omalexia keys` prints this; `omalexia status` shows what is on.
 
+### In the bar
+
+An Omalexia widget (an open book) sits in the bar's right section: it
+brightens while reading aloud, turns urgent while dictation listens, and
+opens a panel with everything above as buttons and switches — read, stop,
+speed, voices, dictation engine, reading mode, tint, font, text size. Right
+click reads the selection, middle click toggles dictation. See
+[`plugin/README.md`](plugin/README.md).
+
 ## What it installs
 
 ### Listen: `omalexia-speakd` + `omalexia-say`
@@ -147,6 +156,9 @@ omalexia/
 │   ├── omalexia-focus               reading mode for the focused window
 │   ├── omalexia-tint                paper tint via hyprsunset
 │   └── omalexia-dictation-cleanup   voxtype post-processor
+├── plugin/                          Omarchy shell bar widget + panel (husense.omalexia)
+│   ├── manifest.json, BarWidget.qml, Panel.qml, Service.qml
+│   └── status.py                    snapshot + actions helper the QML calls
 └── config/
     ├── hypr/omalexia.lua            keys, dimming, fonts, env  → ~/.config/hypr/omalexia.lua
     ├── voxtype/config.toml          tuned dictation             → ~/.config/voxtype/config.toml

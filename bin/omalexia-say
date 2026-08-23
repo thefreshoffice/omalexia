@@ -241,6 +241,16 @@ def main(argv: list[str]) -> int:
         reply = request({"cmd": "reload"})
         print(json.dumps(reply))
         return 0
+    if cmd == "follow":
+        # Stream state changes as JSON lines for bar widgets: one line now,
+        # then one per change. Cheap polling of a 9-byte file.
+        last = None
+        while True:
+            now = state() if SOCKET_PATH.exists() else "down"
+            if now != last:
+                last = now
+                print(json.dumps({"state": now}), flush=True)
+            time.sleep(0.25)
     if cmd == "speed":
         try:
             cur = float(request({"cmd": "status"}).get("speed", 1.0))

@@ -177,16 +177,21 @@ section + section { border-top: 1px solid var(--line); }
 
 /* ---- hero -------------------------------------------------------------------- */
 .hero { padding-block: clamp(3rem, 8vw, 6rem) clamp(3rem, 7vw, 5rem); }
+.hero .wrap { container-type: inline-size; }
+/* The wordmark is 54 monospace characters wide (about 0.6em each). Size it
+   from the container so it always fits, never scrolls. */
 .wordmark {
   font-family: var(--mono);
-  font-size: clamp(0.42rem, 1.55vw, 1rem);
+  font-size: clamp(0.3rem, 2.8vw, 1rem);
+  font-size: min(1rem, calc(100cqw / 33.5));
   line-height: 1.05;
   letter-spacing: 0;
   word-spacing: 0;
   color: var(--accent);
   margin: 0 0 2rem;
   white-space: pre;
-  overflow-x: auto;
+  overflow: hidden;
+  max-width: 100%;
   user-select: none;
 }
 .hero h1 { max-width: 20ch; }

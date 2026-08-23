@@ -1,0 +1,547 @@
+#!/usr/bin/python3
+"""omalexia-speakd — persistent, local text-to-speech daemon.
+
+Keeps the Piper voices loaded in memory so that speech starts within about a
+tenth of a second of a request. Listens on a Unix socket in $XDG_RUNTIME_DIR
+and plays audio through PipeWire (pw-play). Nothing leaves the machine.
+
+Protocol: one JSON object per line on the socket, one JSON reply per line.
+
+  {"cmd": "speak", "text": "...", "lang": "auto|en|nl", "wait": false}
+  {"cmd": "stop"}
+  {"cmd": "status"}
+  {"cmd": "set", "speed": 1.2}
+  {"cmd": "reload"}
+
+With "wait": true the connection stays open until playback finishes (or the
+client hangs up, which cancels playback). Speech Dispatcher uses that mode.
+
+Uses /usr/bin/python3 on purpose: the piper module is installed system-wide
+(AUR piper-tts), not in whatever python mise puts first on PATH.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import re
+import signal
+import socket
+import subprocess
+import sys
+import threading
+import time
+import tomllib
+from pathlib import Path
+
+HOME = Path.home()
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "omalexia"
+SOCKET_PATH = RUNTIME / "speakd.sock"
+STATE_PATH = RUNTIME / "state"
+CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "omalexia" / "config.toml"
+STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "omalexia"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") / "omalexia"
+VOICES_DIR = DATA_HOME / "voices"
+KOKORO_DIR = DATA_HOME / "kokoro"
+
+DEFAULT_CONFIG = {
+    "tts": {
+        "speed": 1.0,
+        "default_language": "auto",
+        "voices": {"en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium"},
+        "engines": {},
+        "kokoro": {"voice": "af_heart"},
+    }
+}
+
+
+def log(*args):
+    print(*args, file=sys.stderr, flush=True)
+
+
+# --------------------------------------------------------------------------
+# Configuration
+# --------------------------------------------------------------------------
+
+
+def load_config() -> dict:
+    cfg = json.loads(json.dumps(DEFAULT_CONFIG))
+    if CONFIG_PATH.exists():
+        try:
+            user = tomllib.loads(CONFIG_PATH.read_text())
+        except Exception as exc:  # noqa: BLE001
+            log(f"config: ignoring unreadable {CONFIG_PATH}: {exc}")
+            user = {}
+        tts = user.get("tts", {})
+        for key in ("speed", "default_language"):
+            if key in tts:
+                cfg["tts"][key] = tts[key]
+        for key in ("voices", "engines", "kokoro"):
+            if isinstance(tts.get(key), dict):
+                cfg["tts"][key].update(tts[key])
+    # A runtime speed override (set via `omalexia say speed`) beats the file.
+    speed_file = STATE_HOME / "speed"
+    if speed_file.exists():
+        try:
+            cfg["tts"]["speed"] = float(speed_file.read_text().strip())
+        except ValueError:
+            pass
+    return cfg
+
+
+# --------------------------------------------------------------------------
+# Text preparation
+# --------------------------------------------------------------------------
+
+NL_WORDS = {
+    "de", "het", "een", "en", "van", "ik", "je", "niet", "dat", "die", "op", "te", "met", "voor",
+    "zijn", "er", "maar", "om", "ook", "als", "dan", "nog", "wel", "naar", "bij", "uit", "aan",
+    "hij", "zij", "wij", "jullie", "deze", "dit", "wat", "hoe", "kan", "kunnen", "worden", "wordt",
+    "heb", "hebben", "heeft", "gaan", "gaat", "moet", "moeten", "geen", "veel", "onze", "over",
+    "wordt", "werd", "zou", "hier", "daar", "alleen", "omdat", "toch", "graag", "dus", "even",
+}
+EN_WORDS = {
+    "the", "a", "an", "and", "of", "to", "in", "is", "it", "that", "for", "you", "with", "on",
+    "are", "this", "be", "as", "at", "or", "was", "have", "from", "not", "by", "but", "we", "can",
+    "your", "will", "if", "all", "they", "what", "which", "their", "has", "been", "would", "there",
+    "about", "when", "one", "more", "these", "into", "just", "also", "our", "should", "could",
+}
+
+
+def detect_language(text: str, fallback: str) -> str:
+    words = re.findall(r"[a-zA-Z']+", text.lower())
+    if not words:
+        return fallback
+    nl = sum(1 for w in words if w in NL_WORDS)
+    en = sum(1 for w in words if w in EN_WORDS)
+    # "ij" is a strong Dutch marker, "th" a strong English one.
+    nl += sum(1 for w in words if "ij" in w) // 2
+    en += sum(1 for w in words if w.startswith("th")) // 2
+    if nl == en:
+        return fallback
+    return "nl" if nl > en else "en"
+
+
+URL_RE = re.compile(r"https?://(?:www\.)?([^/\s]+)\S*")
+BULLET_RE = re.compile(r"^\s*(?:[-*•▪◦]|\d+[.)])\s+", re.MULTILINE)
+HEADING_RE = re.compile(r"^\s*#{1,6}\s+", re.MULTILINE)
+
+
+def prepare_text(text: str) -> str:
+    """Make copied text read well aloud: unwrap hard line breaks, drop
+    markdown noise, read URLs as their host name."""
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = URL_RE.sub(r"\1", text)
+    text = HEADING_RE.sub("", text)
+    text = BULLET_RE.sub("", text)
+    text = re.sub(r"[*_`>#|]+", " ", text)
+    lines = [ln.rstrip() for ln in text.split("\n")]
+    out: list[str] = []
+    for ln in lines:
+        if not ln.strip():
+            # Paragraph break: make sure the previous sentence closes.
+            if out and not re.search(r"[.!?:;…]$", out[-1]):
+                out[-1] += "."
+            continue
+        if out and not re.search(r"[.!?:;…]$", out[-1]) and not out[-1].endswith("\n"):
+            out[-1] = out[-1] + " " + ln.strip()
+        else:
+            out.append(ln.strip())
+    text = " ".join(out)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+# --------------------------------------------------------------------------
+# Engines
+# --------------------------------------------------------------------------
+
+
+class PiperEngine:
+    name = "piper"
+
+    def __init__(self, voice_name: str):
+        from piper import PiperVoice  # imported lazily so --help works without it
+
+        model = VOICES_DIR / f"{voice_name}.onnx"
+        if not model.exists():
+            raise FileNotFoundError(f"voice not installed: {voice_name} ({model})")
+        t = time.time()
+        self.voice = PiperVoice.load(str(model))
+        self.rate = self.voice.config.sample_rate
+        self.voice_name = voice_name
+        log(f"piper: loaded {voice_name} in {time.time() - t:.2f}s ({self.rate} Hz)")
+
+    def synthesize(self, text: str, speed: float, cancel: threading.Event):
+        from piper import SynthesisConfig
+
+        cfg = SynthesisConfig(length_scale=1.0 / max(0.4, min(2.5, speed)))
+        for chunk in self.voice.synthesize(text, cfg):
+            if cancel.is_set():
+                return
+            yield chunk.audio_int16_bytes
+
+
+class KokoroEngine:
+    """Kokoro-82M through a worker process living in its own venv (it needs
+    Python 3.12 and its own onnxruntime). English only, higher quality."""
+
+    name = "kokoro"
+
+    def __init__(self, voice: str):
+        python = KOKORO_DIR / ".venv" / "bin" / "python"
+        worker = KOKORO_DIR / "worker.py"
+        if not python.exists() or not worker.exists():
+            raise FileNotFoundError("kokoro is not installed (run: omalexia voice install kokoro)")
+        self.voice_name = voice
+        self.rate = 24000
+        self.proc = subprocess.Popen(
+            [str(python), str(worker)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            cwd=KOKORO_DIR,
+        )
+        self.lock = threading.Lock()
+        # Wait for the worker's ready line.
+        line = self.proc.stdout.readline()
+        if not line.startswith(b"ready"):
+            raise RuntimeError("kokoro worker failed to start")
+        log(f"kokoro: worker ready ({voice})")
+
+    def synthesize(self, text: str, speed: float, cancel: threading.Event):
+        lang = "en-gb" if self.voice_name.startswith("b") else "en-us"
+        req = json.dumps({"text": text, "voice": self.voice_name, "speed": speed, "lang": lang})
+        with self.lock:
+            self.proc.stdin.write(req.encode() + b"\n")
+            self.proc.stdin.flush()
+            while True:
+                header = self.proc.stdout.read(4)
+                if len(header) < 4:
+                    return
+                n = int.from_bytes(header, "little")
+                if n == 0:
+                    return
+                data = self.proc.stdout.read(n)
+                if cancel.is_set():
+                    # Drain the rest so the worker stays in sync.
+                    continue
+                yield data
+
+
+# --------------------------------------------------------------------------
+# Player
+# --------------------------------------------------------------------------
+
+
+class Player:
+    def __init__(self, rate: int):
+        self.proc = subprocess.Popen(
+            ["pw-play", "--raw", "--format", "s16", "--rate", str(rate), "--channels", "1",
+             "--media-role", "Accessibility", "-"],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    def write(self, data: bytes) -> bool:
+        try:
+            self.proc.stdin.write(data)
+            self.proc.stdin.flush()
+            return True
+        except (BrokenPipeError, ValueError):
+            return False
+
+    def finish(self):
+        try:
+            self.proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+        self.proc.wait()
+
+    def kill(self):
+        try:
+            self.proc.kill()
+        except Exception:  # noqa: BLE001
+            pass
+        try:
+            self.proc.stdin.close()
+        except Exception:  # noqa: BLE001
+            pass
+
+
+# --------------------------------------------------------------------------
+# Daemon
+# --------------------------------------------------------------------------
+
+
+class Daemon:
+    def __init__(self):
+        self.config = load_config()
+        self.engines: dict[str, object] = {}
+        self.lock = threading.Lock()
+        self.cancel = threading.Event()
+        self.worker: threading.Thread | None = None
+        self.player: Player | None = None
+        self.current: dict = {}
+        self.utterance_id = 0
+        self.done = threading.Condition()
+        self.set_state("idle")
+
+    # -- state -------------------------------------------------------------
+
+    def set_state(self, state: str):
+        RUNTIME.mkdir(parents=True, exist_ok=True)
+        tmp = STATE_PATH.with_suffix(".tmp")
+        tmp.write_text(state + "\n")
+        tmp.replace(STATE_PATH)
+
+    def status(self) -> dict:
+        speaking = self.worker is not None and self.worker.is_alive()
+        return {
+            "state": "speaking" if speaking else "idle",
+            "speed": self.config["tts"]["speed"],
+            "voices": self.config["tts"]["voices"],
+            "engines": {lang: getattr(e, "name", "?") for lang, e in self.engines.items()},
+            "text": self.current.get("text", "")[:120] if speaking else "",
+        }
+
+    # -- engines -----------------------------------------------------------
+
+    def engine_for(self, lang: str):
+        if lang in self.engines:
+            return self.engines[lang]
+        tts = self.config["tts"]
+        wanted = tts["engines"].get(lang, "piper")
+        engine = None
+        if wanted == "kokoro" and lang == "en":
+            try:
+                engine = KokoroEngine(tts["kokoro"].get("voice", "af_heart"))
+            except Exception as exc:  # noqa: BLE001
+                log(f"kokoro unavailable, falling back to piper: {exc}")
+        if engine is None:
+            voice = tts["voices"].get(lang)
+            if not voice:
+                raise FileNotFoundError(f"no voice configured for language '{lang}'")
+            engine = PiperEngine(voice)
+        self.engines[lang] = engine
+        return engine
+
+    def preload(self):
+        for lang in self.config["tts"]["voices"]:
+            try:
+                self.engine_for(lang)
+            except Exception as exc:  # noqa: BLE001
+                log(f"preload {lang}: {exc}")
+
+    def reload(self):
+        self.stop()
+        with self.lock:
+            self.config = load_config()
+            old = self.engines
+            self.engines = {}
+            for e in old.values():
+                proc = getattr(e, "proc", None)
+                if proc is not None:
+                    proc.kill()
+        self.preload()
+
+    # -- speaking ----------------------------------------------------------
+
+    def _cancel_locked(self) -> threading.Thread | None:
+        """Cancel the current utterance. Must be called with the lock held;
+        returns the old worker so the caller can join it *outside* the lock
+        (the worker needs the lock to finish)."""
+        self.cancel.set()
+        if self.player is not None:
+            self.player.kill()
+        worker = self.worker
+        self.worker = None
+        self.player = None
+        self.cancel = threading.Event()
+        self.set_state("idle")
+        return worker
+
+    def stop(self):
+        with self.lock:
+            worker = self._cancel_locked()
+        if worker is not None and worker.is_alive():
+            worker.join(timeout=2)
+
+    def speak(self, text: str, lang: str, speed: float | None = None) -> dict:
+        text = prepare_text(text)
+        if not text:
+            return {"ok": False, "error": "nothing to read"}
+        tts = self.config["tts"]
+        if lang in ("", "auto", None):
+            fallback = tts["default_language"] if tts["default_language"] != "auto" else "en"
+            lang = detect_language(text, fallback)
+        if lang not in tts["voices"]:
+            lang = next(iter(tts["voices"]))
+        try:
+            engine = self.engine_for(lang)
+        except Exception as exc:  # noqa: BLE001
+            return {"ok": False, "error": str(exc)}
+
+        with self.lock:
+            old = self._cancel_locked()
+            self.utterance_id += 1
+            uid = self.utterance_id
+            cancel = self.cancel
+            self.current = {"text": text, "lang": lang, "id": uid}
+            speed = float(tts["speed"]) if speed is None else max(0.5, min(2.5, float(speed)))
+            thread = threading.Thread(
+                target=self._run, args=(engine, text, speed, cancel, uid), daemon=True
+            )
+            self.worker = thread
+            self.set_state("speaking")
+            thread.start()
+        if old is not None and old.is_alive():
+            old.join(timeout=2)
+        return {"ok": True, "id": uid, "lang": lang, "engine": engine.name, "chars": len(text)}
+
+    def _run(self, engine, text: str, speed: float, cancel: threading.Event, uid: int):
+        player = None
+        try:
+            player = Player(engine.rate)
+            with self.lock:
+                if cancel.is_set():
+                    player.kill()
+                    return
+                self.player = player
+            for pcm in engine.synthesize(text, speed, cancel):
+                if cancel.is_set() or not player.write(pcm):
+                    break
+            if not cancel.is_set():
+                player.finish()
+        except Exception as exc:  # noqa: BLE001
+            log(f"speak error: {exc}")
+        finally:
+            if player is not None:
+                player.kill()
+            with self.lock:
+                if self.utterance_id == uid and not cancel.is_set():
+                    self.player = None
+                    self.worker = None
+                    self.set_state("idle")
+            with self.done:
+                self.done.notify_all()
+
+    def wait_for(self, uid: int, hangup: threading.Event):
+        """Block until utterance uid is finished or the client hangs up."""
+        while True:
+            with self.lock:
+                active = self.utterance_id == uid and self.worker is not None and self.worker.is_alive()
+            if not active:
+                return
+            if hangup.is_set():
+                log(f"client hung up during utterance {uid}; stopping")
+                worker = None
+                with self.lock:
+                    if self.utterance_id == uid:
+                        worker = self._cancel_locked()
+                if worker is not None and worker.is_alive():
+                    worker.join(timeout=2)
+                return
+            with self.done:
+                self.done.wait(timeout=0.2)
+
+    # -- socket ------------------------------------------------------------
+
+    def handle(self, conn: socket.socket):
+        with conn:
+            try:
+                data = b""
+                while not data.endswith(b"\n"):
+                    chunk = conn.recv(65536)
+                    if not chunk:
+                        break
+                    data += chunk
+                    if len(data) > 4_000_000:
+                        break
+                req = json.loads(data.decode("utf-8", "replace") or "{}")
+            except Exception as exc:  # noqa: BLE001
+                self.send(conn, {"ok": False, "error": f"bad request: {exc}"})
+                return
+
+            cmd = req.get("cmd")
+            if cmd == "speak":
+                reply = self.speak(req.get("text", ""), req.get("lang", "auto"), req.get("speed"))
+                if reply.get("ok") and req.get("wait"):
+                    hangup = threading.Event()
+
+                    def watch():
+                        try:
+                            while conn.recv(1):
+                                pass
+                        except Exception:  # noqa: BLE001
+                            pass
+                        hangup.set()
+
+                    threading.Thread(target=watch, daemon=True).start()
+                    self.wait_for(reply["id"], hangup)
+                    reply["done"] = True
+                self.send(conn, reply)
+            elif cmd == "stop":
+                self.stop()
+                self.send(conn, {"ok": True})
+            elif cmd == "status":
+                self.send(conn, {"ok": True, **self.status()})
+            elif cmd == "set":
+                if "speed" in req:
+                    speed = max(0.5, min(2.5, float(req["speed"])))
+                    self.config["tts"]["speed"] = speed
+                    STATE_HOME.mkdir(parents=True, exist_ok=True)
+                    (STATE_HOME / "speed").write_text(f"{speed:.2f}\n")
+                self.send(conn, {"ok": True, **self.status()})
+            elif cmd == "reload":
+                self.reload()
+                self.send(conn, {"ok": True, **self.status()})
+            else:
+                self.send(conn, {"ok": False, "error": f"unknown command: {cmd}"})
+
+    @staticmethod
+    def send(conn: socket.socket, obj: dict):
+        try:
+            conn.sendall((json.dumps(obj) + "\n").encode())
+        except Exception:  # noqa: BLE001
+            pass
+
+    def serve(self):
+        RUNTIME.mkdir(parents=True, exist_ok=True)
+        if SOCKET_PATH.exists():
+            SOCKET_PATH.unlink()
+        server = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        server.bind(str(SOCKET_PATH))
+        os.chmod(SOCKET_PATH, 0o600)
+        server.listen(8)
+
+        def shutdown(*_):
+            self.stop()
+            try:
+                SOCKET_PATH.unlink()
+            except FileNotFoundError:
+                pass
+            os._exit(0)
+
+        signal.signal(signal.SIGTERM, shutdown)
+        signal.signal(signal.SIGINT, shutdown)
+        signal.signal(signal.SIGHUP, lambda *_: threading.Thread(target=self.reload, daemon=True).start())
+
+        log(f"omalexia-speakd: listening on {SOCKET_PATH}")
+        while True:
+            conn, _ = server.accept()
+            threading.Thread(target=self.handle, args=(conn,), daemon=True).start()
+
+
+def main():
+    if "--help" in sys.argv or "-h" in sys.argv:
+        print(__doc__)
+        return
+    daemon = Daemon()
+    daemon.preload()
+    daemon.serve()
+
+
+if __name__ == "__main__":
+    main()

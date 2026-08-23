@@ -1,0 +1,174 @@
+#!/usr/bin/env bash
+# omalexia-font — switch the whole desktop to a reading-friendly typeface.
+#
+#   omalexia-font atkinson      Atkinson Hyperlegible (default: distinct letter
+#                               forms, made for low-vision readers; official repo)
+#   omalexia-font opendyslexic  OpenDyslexic (weighted bottoms; some readers
+#                               love it, studies show no measurable gain)
+#   omalexia-font inter         Inter (plain, roomy sans; closest to Verdana)
+#   omalexia-font reset         back to Omarchy's defaults
+#   omalexia-font               show the current choice
+#
+# It sets, in one go: fontconfig's sans-serif/system-ui (Qt, Electron, web
+# pages that ask for "sans-serif"), the GTK interface and document fonts,
+# Hyprland's own UI font, the terminal/monospace font (matching Nerd Font so
+# icons keep working), and Chromium's page fonts + minimum size (only when
+# Chromium is closed; it rewrites its Preferences on exit).
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omalexia"
+FONTCONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/fontconfig/conf.d"
+FONTCONF="$FONTCONF_DIR/50-omalexia.conf"
+GSCHEMA="org.gnome.desktop.interface"
+MIN_WEB_PX="${OMALEXIA_MIN_WEB_FONT_PX:-14}"
+
+choice="${1:-}"
+
+declare -A SANS=(
+  [atkinson]="Atkinson Hyperlegible"
+  [opendyslexic]="OpenDyslexic"
+  [inter]="Inter"
+)
+# Nerd-Font-patched monospace companions (all in the official repos).
+declare -A MONO=(
+  [atkinson]="AtkinsonHyperlegibleMono Nerd Font"
+  [opendyslexic]="OpenDyslexicM Nerd Font"
+  [inter]="JetBrainsMono Nerd Font"
+)
+DEFAULT_MONO="JetBrainsMono Nerd Font"
+
+notify() {
+  omarchy-notification-send -g "" --app-name omalexia "$@" 2>/dev/null || true
+}
+
+current_pt() {
+  # "Adwaita Sans 11" -> 11; keeps whatever size omarchy display text size chose.
+  local name
+  name="$(gsettings get "$GSCHEMA" font-name 2>/dev/null | tr -d "'")"
+  [[ $name =~ ([0-9]+)$ ]] && echo "${BASH_REMATCH[1]}" || echo 11
+}
+
+font_present() {
+  fc-list : family | grep -Fqi -- "$1"
+}
+
+set_fontconfig() {
+  local family="$1"
+  mkdir -p "$FONTCONF_DIR"
+  cat >"$FONTCONF" <<XML
+<?xml version="1.0"?>
+<!DOCTYPE fontconfig SYSTEM "fonts.dtd">
+<!-- Written by omalexia-font. Puts the reading font first for every app
+     that asks for a generic sans-serif or the system UI font. -->
+<fontconfig>
+  <match target="pattern">
+    <test name="family" qual="any"><string>sans-serif</string></test>
+    <edit name="family" mode="prepend_first" binding="strong"><string>$family</string></edit>
+  </match>
+  <match target="pattern">
+    <test name="family" qual="any"><string>system-ui</string></test>
+    <edit name="family" mode="prepend_first" binding="strong"><string>$family</string></edit>
+  </match>
+  <match target="pattern">
+    <test name="family" qual="any"><string>Adwaita Sans</string></test>
+    <edit name="family" mode="prepend_first" binding="strong"><string>$family</string></edit>
+  </match>
+</fontconfig>
+XML
+  fc-cache -f >/dev/null 2>&1 || true
+}
+
+set_gtk() {
+  local family="$1" pt
+  pt="$(current_pt)"
+  gsettings set "$GSCHEMA" font-name "'$family $pt'" 2>/dev/null || true
+  gsettings set "$GSCHEMA" document-font-name "'$family $pt'" 2>/dev/null || true
+}
+
+reset_gtk() {
+  local pt
+  pt="$(current_pt)"
+  gsettings set "$GSCHEMA" font-name "'Adwaita Sans $pt'" 2>/dev/null || true
+  gsettings reset "$GSCHEMA" document-font-name 2>/dev/null || true
+}
+
+set_chromium() {
+  # Chromium keeps fonts in Default/Preferences and rewrites the file when it
+  # exits, so only touch it while it is closed.
+  local family="$1" prefs="$HOME/.config/chromium/Default/Preferences"
+  [[ -f $prefs ]] || return 0
+  if pgrep -x chromium >/dev/null; then
+    notify "Chromium is open" "Close it and run 'omalexia font' again to update its fonts."
+    return 0
+  fi
+  python3 - "$prefs" "$family" "$MIN_WEB_PX" <<'PY'
+import json, sys
+path, family, min_px = sys.argv[1], sys.argv[2], int(sys.argv[3])
+with open(path, encoding="utf-8") as f:
+    prefs = json.load(f)
+webprefs = prefs.setdefault("webkit", {}).setdefault("webprefs", {})
+fonts = webprefs.setdefault("fonts", {})
+if family == "RESET":
+    for kind in ("standard", "sansserif"):
+        fonts.get(kind, {}).pop("Zyyy", None)
+    webprefs.pop("minimum_font_size", None)
+    webprefs.pop("minimum_logical_font_size", None)
+else:
+    for kind in ("standard", "sansserif"):
+        fonts.setdefault(kind, {})["Zyyy"] = family
+    webprefs["minimum_font_size"] = min_px
+    webprefs["minimum_logical_font_size"] = min_px
+with open(path, "w", encoding="utf-8") as f:
+    json.dump(prefs, f, separators=(",", ":"))
+PY
+}
+
+set_mono() {
+  local mono="$1"
+  if font_present "$mono"; then
+    omarchy-font-set "$mono" >/dev/null 2>&1 || true
+  fi
+}
+
+apply() {
+  local key="$1" family="${SANS[$1]}"
+  if ! font_present "$family"; then
+    notify "Font not installed" "$family is missing. Run omalexia/install.sh."
+    echo "Font '$family' not installed." >&2
+    exit 1
+  fi
+  mkdir -p "$STATE_DIR"
+  set_fontconfig "$family"
+  set_gtk "$family"
+  set_chromium "$family"
+  printf '%s\n' "$family" >"$STATE_DIR/font"
+  printf '%s\n' "$key" >"$STATE_DIR/font-choice"
+  set_mono "${MONO[$key]}"
+  hyprctl reload >/dev/null 2>&1 || true
+  omarchy-restart-shell >/dev/null 2>&1 || true
+  notify "Reading font: $family" "Open apps pick it up on restart."
+  echo "$family"
+}
+
+reset() {
+  rm -f "$FONTCONF" "$STATE_DIR/font" "$STATE_DIR/font-choice"
+  fc-cache -f >/dev/null 2>&1 || true
+  reset_gtk
+  set_chromium RESET
+  set_mono "$DEFAULT_MONO"
+  hyprctl reload >/dev/null 2>&1 || true
+  omarchy-restart-shell >/dev/null 2>&1 || true
+  notify "Fonts back to Omarchy defaults"
+}
+
+case "$choice" in
+  "")
+    if [[ -f $STATE_DIR/font ]]; then cat "$STATE_DIR/font"; else echo "default"; fi
+    ;;
+  atkinson | opendyslexic | inter) apply "$choice" ;;
+  reset | default) reset ;;
+  *)
+    echo "Usage: omalexia-font [atkinson|opendyslexic|inter|reset]" >&2
+    exit 1
+    ;;
+esac

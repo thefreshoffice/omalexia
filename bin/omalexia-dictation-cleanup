@@ -1,0 +1,94 @@
+#!/usr/bin/python3
+"""omalexia-dictation-cleanup — tidy dictated text before Voxtype types it.
+
+Reads the transcription on stdin, writes the cleaned text on stdout. Voxtype
+calls this through [output.post_process] and falls back to the raw text if it
+fails, so this stays conservative and fast (no network, no models):
+
+  * drops filler words (uh, um, ehm, euh, ...) in English and Dutch
+  * collapses repeated words ("the the") and stray spaces
+  * capitalises the first letter and ends a sentence with a full stop
+  * applies personal replacements from ~/.config/omalexia/replacements.txt
+    (one "spoken = written" pair per line, case-insensitive)
+
+If an `omalexia-dictation-llm` executable exists on PATH it is tried first
+with a short timeout — a hook for optional local LLM clean-up (e.g. ollama).
+"""
+
+from __future__ import annotations
+
+import os
+import re
+import shutil
+import subprocess
+import sys
+from pathlib import Path
+
+FILLERS = {
+    "uh", "uhm", "um", "umm", "hmm", "mhm", "er", "erm", "ah",
+    "eh", "ehm", "euh", "euhm", "uhh", "mm",
+}
+REPLACEMENTS_FILE = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "omalexia" / "replacements.txt"
+
+
+def load_replacements() -> list[tuple[re.Pattern, str]]:
+    pairs = []
+    if not REPLACEMENTS_FILE.exists():
+        return pairs
+    for line in REPLACEMENTS_FILE.read_text().splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        spoken, written = (s.strip() for s in line.split("=", 1))
+        if spoken:
+            pairs.append((re.compile(rf"\b{re.escape(spoken)}\b", re.IGNORECASE), written))
+    return pairs
+
+
+def clean(text: str) -> str:
+    text = text.strip()
+    if not text:
+        return text
+
+    # Filler words, whether followed by a comma or not. Longest first so
+    # "ehm" is not matched as "eh" + "m"; \b keeps "um" out of "umbrella".
+    fillers = sorted(FILLERS, key=len, reverse=True)
+    text = re.sub(
+        r"(?<!\w)(?:" + "|".join(fillers) + r")\b[,.]?\s*",
+        "",
+        text,
+        flags=re.IGNORECASE,
+    )
+    # Immediate word repeats ("I I think", "de de").
+    text = re.sub(r"\b(\w+)(\s+\1\b)+", r"\1", text, flags=re.IGNORECASE)
+    # Spaces before punctuation and doubled spaces.
+    text = re.sub(r"\s+([,.;:!?])", r"\1", text)
+    text = re.sub(r"[ \t]{2,}", " ", text).strip()
+
+    for pattern, written in load_replacements():
+        text = pattern.sub(written, text)
+
+    if text and text[0].isalpha():
+        text = text[0].upper() + text[1:]
+    if text and text[-1] not in ".!?…:;\"')":
+        text += "."
+    return text
+
+
+def main() -> int:
+    raw = sys.stdin.read()
+    llm = shutil.which("omalexia-dictation-llm")
+    if llm:
+        try:
+            out = subprocess.run([llm], input=raw, capture_output=True, text=True, timeout=8, check=False)
+            if out.returncode == 0 and out.stdout.strip():
+                sys.stdout.write(clean(out.stdout))
+                return 0
+        except subprocess.TimeoutExpired:
+            pass
+    sys.stdout.write(clean(raw))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

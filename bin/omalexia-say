@@ -1,0 +1,283 @@
+#!/usr/bin/python3
+"""omalexia-say — read text aloud with the local Omalexia voice.
+
+Usage:
+  omalexia-say [--lang en|nl|auto] [--wait] TEXT...   speak the given text
+  omalexia-say [--lang ...] -                          speak stdin
+  omalexia-say selection                               speak the highlighted text
+  omalexia-say clipboard                               speak the clipboard
+  omalexia-say ocr                                     pick a screen region, OCR it, speak it
+  omalexia-say toggle                                  stop if speaking, otherwise read the selection
+  omalexia-say stop
+  omalexia-say status [--json]
+  omalexia-say speed up|down|reset|<factor>            e.g. 1.25
+  omalexia-say reload                                  re-read ~/.config/omalexia/config.toml
+
+Everything runs on this machine through omalexia-speakd; nothing is sent
+anywhere. Keys: F10 = toggle, Shift+F10 = clipboard, Ctrl+F10 = screen (OCR).
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "omalexia"
+SOCKET_PATH = RUNTIME / "speakd.sock"
+STATE_PATH = RUNTIME / "state"
+
+GLYPH_SPEAK = "󰕾"
+GLYPH_STOP = "󰝛"
+GLYPH_WARN = "󰀦"
+
+
+def notify(headline: str, body: str = "", glyph: str = GLYPH_SPEAK, urgency: str = "low"):
+    if shutil.which("omarchy-notification-send"):
+        cmd = ["omarchy-notification-send", "-g", glyph, "-u", urgency, "--app-name", "omalexia", headline]
+        if body:
+            cmd.append(body)
+        subprocess.run(cmd, check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    elif shutil.which("notify-send"):
+        subprocess.run(["notify-send", "-a", "omalexia", headline, body], check=False)
+
+
+def request(obj: dict, keep_open: bool = False):
+    if not SOCKET_PATH.exists():
+        # The daemon is a user service; try to bring it up once.
+        subprocess.run(["systemctl", "--user", "start", "omalexia-speakd.service"], check=False,
+                       stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        for _ in range(40):
+            if SOCKET_PATH.exists():
+                break
+            time.sleep(0.1)
+    if not SOCKET_PATH.exists():
+        raise ConnectionError("omalexia-speakd is not running (systemctl --user start omalexia-speakd)")
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.connect(str(SOCKET_PATH))
+    sock.sendall((json.dumps(obj) + "\n").encode())
+    if keep_open:
+        # Stay connected until the daemon says it is done; hanging up cancels.
+        def bail(*_):
+            sock.close()
+            sys.exit(0)
+
+        signal.signal(signal.SIGTERM, bail)
+        signal.signal(signal.SIGINT, bail)
+        signal.signal(signal.SIGPIPE, bail)
+    data = b""
+    while not data.endswith(b"\n"):
+        chunk = sock.recv(65536)
+        if not chunk:
+            break
+        data += chunk
+    sock.close()
+    return json.loads(data.decode() or "{}")
+
+
+def state() -> str:
+    try:
+        return STATE_PATH.read_text().strip()
+    except FileNotFoundError:
+        return "idle"
+
+
+def run_text(cmd: list[str], timeout: float = 5) -> str:
+    try:
+        return subprocess.run(cmd, capture_output=True, timeout=timeout, check=False).stdout.decode("utf-8", "replace")
+    except (subprocess.TimeoutExpired, FileNotFoundError):
+        return ""
+
+
+def get_selection() -> str:
+    """Highlighted text (Wayland primary selection). Falls back to a synthetic
+    Ctrl+C for clients that do not publish a primary selection (XWayland),
+    restoring the clipboard afterwards. Terminals are excluded from the
+    fallback because Ctrl+C would interrupt whatever is running."""
+    text = run_text(["wl-paste", "--primary", "--no-newline"]).strip()
+    if text:
+        return text
+    active = run_text(["hyprctl", "activewindow", "-j"])
+    try:
+        win = json.loads(active or "{}")
+    except json.JSONDecodeError:
+        win = {}
+    cls = (win.get("class") or "").lower()
+    if any(t in cls for t in ("alacritty", "kitty", "foot", "ghostty", "wezterm", "terminal")):
+        return ""
+    if not shutil.which("wtype"):
+        return ""
+    old = run_text(["wl-paste", "--no-newline"])
+    subprocess.run(["wtype", "-M", "ctrl", "c", "-m", "ctrl"], check=False)
+    time.sleep(0.2)
+    text = run_text(["wl-paste", "--no-newline"]).strip()
+    if old:
+        subprocess.run(["wl-copy", "--", old], check=False)
+    return text
+
+
+def get_clipboard() -> str:
+    return run_text(["wl-paste", "--no-newline"]).strip()
+
+
+def get_ocr() -> str:
+    """Freeze the screen, let the user draw a rectangle, OCR it."""
+    freeze = None
+    if shutil.which("hyprpicker"):
+        freeze = subprocess.Popen(["hyprpicker", "-r", "-z"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        time.sleep(0.1)
+    try:
+        region = run_text(["slurp"], timeout=120).strip()
+        if not region:
+            return ""
+        grim = subprocess.run(["grim", "-g", region, "-"], capture_output=True, check=False)
+    finally:
+        if freeze is not None:
+            freeze.kill()
+    if grim.returncode != 0 or not grim.stdout:
+        return ""
+    langs = os.environ.get("OMARCHY_OCR_LANGS", "eng+nld")
+    ocr = subprocess.run(
+        ["tesseract", "stdin", "stdout", "--oem", "1", "--psm", "6", "-l", langs, "--dpi", "300"],
+        input=grim.stdout, capture_output=True, check=False,
+    )
+    if ocr.returncode != 0:
+        # Language pack missing? Retry with English only.
+        ocr = subprocess.run(
+            ["tesseract", "stdin", "stdout", "--oem", "1", "--psm", "6", "-l", "eng", "--dpi", "300"],
+            input=grim.stdout, capture_output=True, check=False,
+        )
+    return ocr.stdout.decode("utf-8", "replace").strip()
+
+
+def speak(text: str, lang: str = "auto", wait: bool = False, quiet: bool = False,
+          speed: float | None = None) -> int:
+    text = text.strip()
+    if not text:
+        if not quiet:
+            notify("Nothing to read", "Select some text first, then press F10.", GLYPH_WARN)
+        return 1
+    req = {"cmd": "speak", "text": text, "lang": lang, "wait": wait}
+    if speed is not None:
+        req["speed"] = speed
+    try:
+        reply = request(req, keep_open=wait)
+    except (ConnectionError, OSError) as exc:
+        notify("Read aloud is unavailable", str(exc), GLYPH_WARN, "normal")
+        return 2
+    if not reply.get("ok"):
+        notify("Could not read that", reply.get("error", "unknown error"), GLYPH_WARN, "normal")
+        return 2
+    if not quiet:
+        preview = " ".join(text.split())
+        if len(preview) > 110:
+            preview = preview[:107] + "…"
+        notify(f"Reading ({reply.get('lang', '?')})", preview)
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    lang = "auto"
+    wait = False
+    quiet = False
+    speed: float | None = None
+    args: list[str] = []
+    it = iter(argv)
+    for a in it:
+        if a in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        if a == "--lang":
+            lang = next(it, "auto")
+        elif a.startswith("--lang="):
+            lang = a.split("=", 1)[1]
+        elif a == "--speed":
+            speed = float(next(it, "1"))
+        elif a == "--rate":
+            # Speech Dispatcher rate, -100..100 -> 0.5x .. 1.5x (overrides the configured speed).
+            try:
+                speed = 1.0 + float(next(it, "0")) / 200.0
+            except ValueError:
+                speed = None
+        elif a == "--wait":
+            wait = True
+        elif a in ("--quiet", "-q"):
+            quiet = True
+        else:
+            args.append(a)
+    # Speech Dispatcher passes language tags like "en-US"; keep the base.
+    lang = (lang or "auto").split("-")[0].split("_")[0].lower()
+    if lang not in ("auto", "en", "nl"):
+        lang = "auto"
+
+    if not args:
+        print(__doc__)
+        return 1
+    cmd, rest = args[0], args[1:]
+
+    if cmd == "stop":
+        try:
+            request({"cmd": "stop"})
+        except (ConnectionError, OSError):
+            pass
+        return 0
+    if cmd == "status":
+        try:
+            reply = request({"cmd": "status"})
+        except (ConnectionError, OSError) as exc:
+            reply = {"ok": False, "state": "down", "error": str(exc)}
+        if "--json" in rest:
+            print(json.dumps(reply))
+        else:
+            print(reply.get("state", "?"), f"speed={reply.get('speed', '?')}", json.dumps(reply.get("voices", {})))
+        return 0
+    if cmd == "reload":
+        reply = request({"cmd": "reload"})
+        print(json.dumps(reply))
+        return 0
+    if cmd == "speed":
+        try:
+            cur = float(request({"cmd": "status"}).get("speed", 1.0))
+        except (ConnectionError, OSError):
+            cur = 1.0
+        arg = rest[0] if rest else "reset"
+        if arg == "up":
+            new = cur + 0.1
+        elif arg == "down":
+            new = cur - 0.1
+        elif arg == "reset":
+            new = 1.0
+        else:
+            new = float(arg)
+        reply = request({"cmd": "set", "speed": new})
+        notify("Reading speed", f"{reply.get('speed', new):.2f}×")
+        return 0
+    if cmd == "toggle":
+        if state() == "speaking":
+            request({"cmd": "stop"})
+            return 0
+        return speak(get_selection(), lang, wait, quiet, speed)
+    if cmd == "selection":
+        return speak(get_selection(), lang, wait, quiet, speed)
+    if cmd == "clipboard":
+        return speak(get_clipboard(), lang, wait, quiet, speed)
+    if cmd == "ocr":
+        text = get_ocr()
+        if not text:
+            notify("No text found", "Nothing readable in that region.", GLYPH_WARN)
+            return 1
+        subprocess.run(["wl-copy", "--", text], check=False)
+        return speak(text, lang, wait, quiet, speed)
+    if cmd == "-":
+        return speak(sys.stdin.read(), lang, wait, quiet, speed)
+    return speak(" ".join(args), lang, wait, quiet, speed)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

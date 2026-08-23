@@ -1,0 +1,260 @@
+#!/usr/bin/python3
+"""omalexia-voice — manage the local reading voices.
+
+Usage:
+  omalexia-voice list                       installed voices and the current choice
+  omalexia-voice catalog [en|nl]            voices available for download
+  omalexia-voice install NAME [NAME...]     download Piper voices (e.g. nl_NL-pim-medium)
+  omalexia-voice install kokoro             install the optional Kokoro English engine
+  omalexia-voice set en|nl NAME             use NAME for that language (installs it if needed)
+  omalexia-voice engine en piper|kokoro     pick the English engine
+  omalexia-voice language auto|en|nl        default when the language cannot be detected
+  omalexia-voice test [en|nl]               say a test sentence
+
+Voices live in ~/.local/share/omalexia/voices; settings in
+~/.config/omalexia/config.toml. The daemon reloads automatically.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import subprocess
+import sys
+import tomllib
+import urllib.request
+from pathlib import Path
+
+HOME = Path.home()
+CONFIG_DIR = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "omalexia"
+CONFIG_PATH = CONFIG_DIR / "config.toml"
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") / "omalexia"
+VOICES_DIR = DATA_HOME / "voices"
+KOKORO_DIR = DATA_HOME / "kokoro"
+KOKORO_FILES = {
+    "kokoro-v1.0.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
+    "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
+}
+VOICES_INDEX = "https://huggingface.co/rhasspy/piper-voices/resolve/main/voices.json"
+
+# Curated, single-speaker voices that read clearly. Anything in the Piper
+# catalog works too (omalexia-voice catalog).
+RECOMMENDED = {
+    "en": [
+        ("en_US-lessac-medium", "clear US English, instant (default)"),
+        ("en_GB-alan-medium", "clear British English, instant"),
+        ("en_GB-jenny_dioco-medium", "warm British English, instant"),
+        ("en_US-hfc_female-medium", "bright US English, instant"),
+        ("en_US-lessac-high", "richer US English, ~1 s to start"),
+        ("en_GB-cori-high", "richer British English, ~1 s to start"),
+    ],
+    "nl": [
+        ("nl_NL-pim-medium", "clear Dutch, instant (default)"),
+        ("nl_NL-ronnie-medium", "Dutch, instant"),
+        ("nl_NL-alex-medium", "Dutch, instant"),
+        ("nl_BE-nathalie-medium", "Flemish, instant"),
+        ("nl_BE-rdh-medium", "Flemish, instant"),
+    ],
+}
+
+DEFAULTS = {
+    "tts": {
+        "speed": 1.0,
+        "default_language": "auto",
+        "voices": {"en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium"},
+        "engines": {},
+        "kokoro": {"voice": "af_heart"},
+    }
+}
+
+
+def load() -> dict:
+    cfg = json.loads(json.dumps(DEFAULTS))
+    if CONFIG_PATH.exists():
+        user = tomllib.loads(CONFIG_PATH.read_text()).get("tts", {})
+        for k in ("speed", "default_language"):
+            if k in user:
+                cfg["tts"][k] = user[k]
+        for k in ("voices", "engines", "kokoro"):
+            if isinstance(user.get(k), dict):
+                cfg["tts"][k].update(user[k])
+    return cfg
+
+
+def toml_value(v) -> str:
+    if isinstance(v, bool):
+        return "true" if v else "false"
+    if isinstance(v, (int, float)):
+        return repr(v)
+    return json.dumps(str(v))
+
+
+def save(cfg: dict):
+    CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+    tts = cfg["tts"]
+    lines = [
+        "# Omalexia text-to-speech settings. Managed by `omalexia voice`; hand edits are fine.",
+        "[tts]",
+        f"speed = {toml_value(tts['speed'])}",
+        f"default_language = {toml_value(tts['default_language'])}",
+        "",
+        "[tts.voices]",
+    ]
+    lines += [f"{k} = {toml_value(v)}" for k, v in tts["voices"].items()]
+    lines += ["", "[tts.engines]"]
+    lines += [f"{k} = {toml_value(v)}" for k, v in tts["engines"].items()]
+    lines += ["", "[tts.kokoro]"]
+    lines += [f"{k} = {toml_value(v)}" for k, v in tts["kokoro"].items()]
+    CONFIG_PATH.write_text("\n".join(lines) + "\n")
+    reload_daemon()
+
+
+def reload_daemon():
+    subprocess.run(["systemctl", "--user", "reload-or-restart", "omalexia-speakd.service"],
+                   check=False, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+
+def installed() -> list[str]:
+    return sorted(p.stem for p in VOICES_DIR.glob("*.onnx") if p.with_suffix(".onnx.json").exists())
+
+
+def install_piper(names: list[str]) -> bool:
+    VOICES_DIR.mkdir(parents=True, exist_ok=True)
+    missing = [n for n in names if n not in installed()]
+    if not missing:
+        return True
+    print(f"Downloading {', '.join(missing)} …")
+    result = subprocess.run(
+        ["/usr/bin/python3", "-m", "piper.download_voices", "--download-dir", str(VOICES_DIR), *missing],
+        check=False,
+    )
+    return result.returncode == 0 and all(n in installed() for n in missing)
+
+
+def install_kokoro() -> bool:
+    KOKORO_DIR.mkdir(parents=True, exist_ok=True)
+    venv = KOKORO_DIR / ".venv"
+    worker_src = Path(os.environ.get("OMALEXIA_KOKORO_WORKER") or DATA_HOME / "kokoro-worker.py")
+    if not worker_src.exists():
+        print("kokoro worker script not found; reinstall omalexia", file=sys.stderr)
+        return False
+    (KOKORO_DIR / "worker.py").write_text(worker_src.read_text())
+    if not (venv / "bin" / "python").exists():
+        uv = subprocess.run(["which", "uv"], capture_output=True, check=False).returncode == 0
+        if uv:
+            cmd = ["uv", "venv", "--python", "3.12", str(venv)]
+        else:
+            cmd = ["python3", "-m", "venv", str(venv)]
+        if subprocess.run(cmd, check=False).returncode != 0:
+            return False
+    pip = ["uv", "pip", "install", "--python", str(venv / "bin" / "python")] if subprocess.run(
+        ["which", "uv"], capture_output=True, check=False).returncode == 0 else [str(venv / "bin" / "pip"), "install"]
+    if subprocess.run([*pip, "kokoro-onnx", "numpy"], check=False).returncode != 0:
+        return False
+    for name, url in KOKORO_FILES.items():
+        target = KOKORO_DIR / name
+        if target.exists():
+            continue
+        print(f"Downloading {name} …")
+        urllib.request.urlretrieve(url, target)
+    print("Kokoro installed. Enable it with: omalexia voice engine en kokoro")
+    return True
+
+
+def catalog(lang: str | None):
+    try:
+        with urllib.request.urlopen(VOICES_INDEX, timeout=20) as resp:
+            data = json.load(resp)
+    except Exception as exc:  # noqa: BLE001
+        print(f"could not fetch catalog: {exc}", file=sys.stderr)
+        return 1
+    for key, v in sorted(data.items()):
+        code = v.get("language", {}).get("code", "")
+        if lang and not code.lower().startswith(lang.lower()):
+            continue
+        print(f"{key:36} {v.get('quality', ''):7} {v.get('language', {}).get('name_english', '')}")
+    return 0
+
+
+def main(argv: list[str]) -> int:
+    if not argv or argv[0] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    cmd, rest = argv[0], argv[1:]
+    cfg = load()
+    tts = cfg["tts"]
+
+    if cmd == "list":
+        have = installed()
+        print("Current:")
+        for lang, name in tts["voices"].items():
+            engine = tts["engines"].get(lang, "piper")
+            mark = "" if name in have else "  (not installed)"
+            print(f"  {lang}: {name} [{engine}]{mark}")
+        print(f"  default language: {tts['default_language']}, speed: {tts['speed']}")
+        print("Installed:")
+        for name in have:
+            print(f"  {name}")
+        print("Recommended:")
+        for lang, voices in RECOMMENDED.items():
+            for name, blurb in voices:
+                print(f"  {lang}: {name:28} {blurb}")
+        if (KOKORO_DIR / ".venv").exists():
+            print("Kokoro: installed")
+        return 0
+
+    if cmd == "catalog":
+        return catalog(rest[0] if rest else None)
+
+    if cmd == "install":
+        if not rest:
+            print("install what?", file=sys.stderr)
+            return 1
+        if rest == ["kokoro"]:
+            return 0 if install_kokoro() else 1
+        return 0 if install_piper(rest) else 1
+
+    if cmd == "set" and len(rest) == 2:
+        lang, name = rest
+        if not install_piper([name]):
+            print(f"could not install {name}", file=sys.stderr)
+            return 1
+        tts["voices"][lang] = name
+        save(cfg)
+        print(f"{lang} -> {name}")
+        return 0
+
+    if cmd == "engine" and len(rest) == 2:
+        lang, engine = rest
+        if engine not in ("piper", "kokoro"):
+            print("engine must be piper or kokoro", file=sys.stderr)
+            return 1
+        if engine == "kokoro" and lang != "en":
+            print("kokoro only speaks English", file=sys.stderr)
+            return 1
+        if engine == "kokoro" and not (KOKORO_DIR / ".venv").exists():
+            if not install_kokoro():
+                return 1
+        tts["engines"][lang] = engine
+        save(cfg)
+        print(f"{lang} engine -> {engine}")
+        return 0
+
+    if cmd == "language" and len(rest) == 1:
+        tts["default_language"] = rest[0]
+        save(cfg)
+        return 0
+
+    if cmd == "test":
+        lang = rest[0] if rest else "en"
+        text = {
+            "nl": "Hallo, ik ben de stem van Omalexia. Selecteer tekst en druk op F10 om het voor te lezen.",
+        }.get(lang, "Hello, I am the Omalexia voice. Select some text and press F10 to hear it read aloud.")
+        return subprocess.run(["omalexia-say", "--lang", lang, text], check=False).returncode
+
+    print(__doc__)
+    return 1
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

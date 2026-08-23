@@ -1,0 +1,8 @@
+# Personal word list for dictation.
+# One "spoken = written" pair per line, case-insensitive, whole words.
+# Applied by omalexia-dictation-cleanup after every transcription.
+#
+# Examples:
+#   hue sense = Husense
+#   my email = michael@example.com
+#   next cloud = Nextcloud

@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# omalexia — dyslexia-friendly Omarchy. One command in front of the parts.
+#
+#   omalexia say ...          read aloud (see: omalexia say --help)
+#   omalexia stop             stop reading
+#   omalexia voice ...        choose/install voices (see: omalexia voice --help)
+#   omalexia font [name]      reading font: atkinson | opendyslexic | inter | reset
+#   omalexia focus [toggle]   reading mode for the focused window
+#   omalexia tint [toggle]    warm paper tint
+#   omalexia text-size [n]    text size everywhere (omarchy display text size)
+#   omalexia dictation ...    voxtype: status | model | config | restart | test
+#   omalexia motion on|off    reduced motion (no window animations)
+#   omalexia status           what is on, what is running
+#   omalexia keys             the cheat sheet
+#   omalexia off              switch every visual change back to Omarchy defaults
+#
+# Everything is local. Nothing leaves the machine.
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omalexia"
+cmd="${1:-help}"
+shift || true
+
+keys() {
+  cat <<'EOF'
+Omalexia keys — F9 = talk, F10 = listen
+
+  Listen
+    F10                 read the highlighted text aloud; press again to stop
+    Shift + F10         read the clipboard
+    Ctrl + F10          draw a box on the screen, read what is in it (OCR)
+    Super + F10         read faster        Super + Shift + F10   read slower
+
+  Talk (voxtype)
+    F9 (hold)           dictate while held, release to type it
+    Super + Ctrl + X    toggle dictation on/off for longer text
+    Shift + F9          cancel the current dictation
+
+  Look
+    Super + R           reading mode: focused window narrow and centred
+    Super + Shift + R   warm paper tint on/off
+    Super + Ctrl + Z    zoom the screen in (Super + Ctrl + Alt + Z resets)
+    Super + Ctrl + Backspace  single window square/narrow on wide screens
+    Super + Alt + A     Omalexia menu
+
+  Anything that speaks through Speech Dispatcher (Firefox Reader View
+  "Narrate", Orca, spd-say) uses the same local voice.
+EOF
+}
+
+status() {
+  echo "Omalexia status"
+  printf '  reading voice:   %s\n' "$(omalexia-say status 2>/dev/null || echo 'daemon down')"
+  printf '  daemon:          %s\n' "$(systemctl --user is-active omalexia-speakd.service 2>/dev/null || true)"
+  printf '  font:            %s\n' "$(omalexia-font)"
+  printf '  text size:       %s\n' "$(omarchy-display-text-size 2>/dev/null | head -n1 | sed 's/^text size: *//' || echo '?')"
+  printf '  paper tint:      %s\n' "$(omalexia-tint status)"
+  printf '  reduced motion:  %s\n' "$([[ -f $STATE_DIR/reduced-motion ]] && echo on || echo off)"
+  printf '  narrow single window: %s\n' "$([[ -f $HOME/.local/state/omarchy/toggles/hypr/single-window-aspect-ratio.lua ]] && echo on || echo off)"
+  if command -v voxtype >/dev/null; then
+    printf '  dictation:       %s (%s)\n' "$(voxtype status 2>/dev/null || echo '?')" "$(systemctl --user is-active voxtype.service 2>/dev/null || true)"
+    printf '  dictation engine: %s\n' "$(grep -E '^engine' ~/.config/voxtype/config.toml 2>/dev/null | head -n1 | sed 's/engine *= *//; s/"//g')"
+  else
+    echo "  dictation:       voxtype not installed"
+  fi
+  printf '  speech-dispatcher module: %s\n' "$(grep -q 'DefaultModule omalexia' ~/.config/speech-dispatcher/speechd.conf 2>/dev/null && echo omalexia || echo 'not set')"
+}
+
+dictation() {
+  local sub="${1:-status}"
+  command -v voxtype >/dev/null || { echo "voxtype is not installed (run omalexia/install.sh)" >&2; exit 1; }
+  case "$sub" in
+    status) voxtype status; systemctl --user status voxtype.service --no-pager | head -n 5 ;;
+    model) omarchy-voxtype-model ;;
+    config) omarchy-voxtype-config ;;
+    restart) systemctl --user restart voxtype.service && echo "voxtype restarted" ;;
+    test) omalexia-dictation-cleanup <<<"uh so this is um a test test of the cleanup" ; echo ;;
+    check) voxtype setup check ;;
+    *) echo "Usage: omalexia dictation [status|model|config|restart|test|check]" >&2; exit 1 ;;
+  esac
+}
+
+motion() {
+  mkdir -p "$STATE_DIR"
+  case "${1:-toggle}" in
+    off | reduced) : >"$STATE_DIR/reduced-motion" ;;
+    on | full) rm -f "$STATE_DIR/reduced-motion" ;;
+    toggle) if [[ -f $STATE_DIR/reduced-motion ]]; then rm -f "$STATE_DIR/reduced-motion"; else : >"$STATE_DIR/reduced-motion"; fi ;;
+    *) echo "Usage: omalexia motion on|off|toggle" >&2; exit 1 ;;
+  esac
+  hyprctl reload >/dev/null
+  if [[ -f $STATE_DIR/reduced-motion ]]; then echo "reduced motion: on"; else echo "reduced motion: off"; fi
+}
+
+off() {
+  echo "Reverting Omalexia's visual changes (voices, dictation and keys stay)."
+  omalexia-font reset
+  omalexia-tint off >/dev/null 2>&1 || true
+  omarchy-display-text-size reset >/dev/null 2>&1 || true
+  omarchy-hyprland-toggle single-window-aspect-ratio off >/dev/null 2>&1 || true
+  rm -f "$STATE_DIR/reduced-motion"
+  hyprctl reload >/dev/null 2>&1 || true
+  echo "Done. To remove the keys and dimming too, delete the require(\"hypr.omalexia\") line from ~/.config/hypr/hyprland.lua."
+}
+
+case "$cmd" in
+  say) omalexia-say "$@" ;;
+  stop) omalexia-say stop ;;
+  voice | voices) omalexia-voice "$@" ;;
+  font | fonts) omalexia-font "$@" ;;
+  focus | reading-mode) omalexia-focus "$@" ;;
+  tint) omalexia-tint "$@" ;;
+  text-size | text) omarchy-display-text-size "$@" ;;
+  dictation | dictate) dictation "$@" ;;
+  motion) motion "$@" ;;
+  status) status ;;
+  keys | help-keys) keys ;;
+  off) off ;;
+  help | -h | --help) sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' ;;
+  *) echo "Unknown command: $cmd" >&2; sed -n '2,17p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1 ;;
+esac

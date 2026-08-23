@@ -1,0 +1,107 @@
+#!/usr/bin/env bash
+# omalexia-focus — reading mode for the focused window.
+#
+# Tiled windows on a wide monitor become very long lines of text, which is
+# hard to read for dyslexic readers (the BDA recommends 60–70 characters per
+# line). This floats the focused window at a comfortable reading width,
+# centred on its monitor; other windows are already dimmed by omalexia.lua.
+# Run it again to put the window back in the tiling layout.
+#
+# Usage: omalexia-focus [toggle|on|off|status] [window-address]
+#
+# Omarchy's Hyprland uses the Lua config provider, so `hyprctl dispatch`
+# takes Lua (hl.dsp.*) rather than the classic "setfloating address:…" form.
+set -euo pipefail
+
+STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omalexia/focus"
+MAX_WIDTH="${OMALEXIA_READING_WIDTH:-1100}" # logical pixels
+WIDTH_FRACTION="${OMALEXIA_READING_FRACTION:-0.60}"
+HEIGHT_FRACTION="${OMALEXIA_READING_HEIGHT:-0.94}"
+
+action="${1:-toggle}"
+address="${2:-}"
+
+notify() {
+  omarchy-notification-send -g "󰈈" --app-name omalexia "$@" 2>/dev/null || true
+}
+
+dispatch() {
+  hyprctl dispatch "$1" >/dev/null
+}
+
+if [[ -z $address ]]; then
+  address="$(hyprctl activewindow -j 2>/dev/null | jq -r '.address // empty')"
+fi
+if [[ -z $address ]]; then
+  notify "No window focused"
+  exit 1
+fi
+
+window="$(hyprctl clients -j | jq -c --arg a "$address" '.[] | select(.address == $a)')"
+if [[ -z $window ]]; then
+  echo "No window with address $address" >&2
+  exit 1
+fi
+floating="$(jq -r '.floating' <<<"$window")"
+monitor_id="$(jq -r '.monitor' <<<"$window")"
+marker="$STATE_DIR/${address//\//_}"
+
+# Monitor geometry in logical pixels: position, size/scale, reserved edges
+# (bar) as [left, top, right, bottom].
+read -r mon_x mon_y mon_w mon_h mon_scale res_l res_t res_r res_b < <(hyprctl monitors -j |
+  jq -r --argjson id "$monitor_id" '.[] | select(.id == $id) |
+    "\(.x) \(.y) \(.width) \(.height) \(.scale) \(.reserved[0]) \(.reserved[1]) \(.reserved[2]) \(.reserved[3])"')
+if [[ -z ${mon_w:-} ]]; then
+  notify "Could not read monitor size"
+  exit 1
+fi
+
+read -r width height pos_x pos_y < <(awk \
+  -v mx="$mon_x" -v my="$mon_y" -v mw="$mon_w" -v mh="$mon_h" -v s="$mon_scale" \
+  -v rl="$res_l" -v rt="$res_t" -v rr="$res_r" -v rb="$res_b" \
+  -v wf="$WIDTH_FRACTION" -v hf="$HEIGHT_FRACTION" -v max="$MAX_WIDTH" 'BEGIN {
+    lw = mw / s - rl - rr; lh = mh / s - rt - rb
+    w = lw * wf; if (w > max) w = max
+    h = lh * hf
+    x = mx + rl + (lw - w) / 2
+    y = my + rt + (lh - h) / 2
+    printf "%d %d %d %d\n", w, h, x, y
+  }')
+
+reading_on() {
+  mkdir -p "$STATE_DIR"
+  if [[ $floating != "true" ]]; then
+    dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'float' })"
+  fi
+  dispatch "hl.dsp.window.resize({ window = 'address:$address', x = $width, y = $height })"
+  dispatch "hl.dsp.window.move({ window = 'address:$address', x = $pos_x, y = $pos_y })"
+  : >"$marker"
+  notify "Reading mode" "Window narrowed to ${width} px. Super+R again to tile it."
+}
+
+reading_off() {
+  rm -f "$marker"
+  if [[ $floating == "true" ]]; then
+    dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'tile' })"
+  fi
+  notify "Reading mode off"
+}
+
+case "$action" in
+  on) reading_on ;;
+  off) reading_off ;;
+  status)
+    if [[ -f $marker && $floating == "true" ]]; then echo on; else echo off; fi
+    ;;
+  toggle)
+    if [[ -f $marker && $floating == "true" ]]; then
+      reading_off
+    else
+      reading_on
+    fi
+    ;;
+  *)
+    echo "Usage: omalexia-focus [toggle|on|off|status] [window-address]" >&2
+    exit 1
+    ;;
+esac

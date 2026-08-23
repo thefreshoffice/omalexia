@@ -1,0 +1,18 @@
+[Unit]
+Description=Omalexia local text-to-speech daemon
+Documentation=https://github.com/husense/omarchy-standard
+After=pipewire.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/.local/bin/omalexia-speakd
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=2
+Nice=5
+# Voices are loaded once and kept in memory (about 150 MB for two voices).
+Environment=OMP_NUM_THREADS=4
+
+[Install]
+WantedBy=default.target

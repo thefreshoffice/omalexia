@@ -1,0 +1,120 @@
+# Voxtype configuration tuned by Omalexia for dictation-first use.
+#
+# Installed to ~/.config/voxtype/config.toml (previous file backed up).
+# Voxtype reference: /etc/voxtype/config.toml
+#
+# Keys (from Omarchy + Omalexia):
+#   F9 (hold)        push-to-talk, release to type
+#   Super + Ctrl + X toggle recording on/off for long dictation
+#   Shift + F9       cancel the current recording
+
+state_file = "auto"
+
+# Parakeet TDT 0.6B v3 (NVIDIA, ONNX) — punctuation and capitalisation built
+# in, 25 European languages including Dutch and English with automatic
+# language detection, and far more accurate than Whisper base.en while
+# still fast on a CPU. omalexia/install.sh downloads the model and switches
+# the voxtype binary to its ONNX variant; if that fails it sets engine back
+# to "whisper".
+engine = "parakeet"
+
+[parakeet]
+model = "parakeet-tdt-0.6b-v3-int8"
+model_type = "tdt"
+on_demand_loading = false
+
+[whisper]
+# Fallback engine when Parakeet is unavailable.
+model = "base.en"
+language = "en"
+translate = false
+mode = "local"
+on_demand_loading = false
+gpu_isolation = false
+flash_attention = false
+
+[hotkey]
+# Hyprland drives the hotkeys, not evdev.
+enabled = false
+mode = "push_to_talk"
+
+[audio]
+device = "default"
+sample_rate = 16000
+# Long-form dictation: five minutes before the safety cut-off (default 60 s).
+max_duration_secs = 300
+pause_media = true
+
+[audio.feedback]
+# A short tick when recording starts and stops. Dyslexic users have said
+# hearing the confirmation matters more than seeing it.
+enabled = true
+theme = "subtle"
+volume = 0.6
+
+[output]
+# Type at the cursor with wtype (works in terminals, browsers, editors).
+mode = "type"
+fallback_to_clipboard = true
+type_delay_ms = 0
+pre_type_delay_ms = 0
+auto_submit = false
+shift_enter_newlines = false
+
+[output.post_process]
+# Fast, local, rule-based clean-up: fillers, doubled words, capital letter,
+# personal replacements from ~/.config/omalexia/replacements.txt. Voxtype
+# falls back to the raw text if this fails or times out.
+command = "omalexia-dictation-cleanup"
+timeout_ms = 3000
+
+[output.notification]
+on_recording_start = false
+on_recording_stop = false
+# Show what was typed, so a slip can be caught right away.
+on_transcription = true
+show_engine_icon = false
+
+[text]
+# Say "period", "comma", "new line" to get punctuation. Parakeet already
+# punctuates on its own; turn this on if you prefer explicit control.
+spoken_punctuation = false
+smart_auto_submit = false
+
+# Words the model tends to get wrong (case-insensitive). Personal additions
+# belong in ~/.config/omalexia/replacements.txt instead of here.
+[text.replacements]
+"omarky" = "Omarchy"
+"omarchie" = "Omarchy"
+"hyperland" = "Hyprland"
+"hue sense" = "Husense"
+"you sense" = "Husense"
+"net bird" = "NetBird"
+"vox type" = "voxtype"
+"oma lexia" = "Omalexia"
+
+[meeting]
+enabled = false
+
+[meeting.diarization]
+enabled = false
+
+[meeting.audio]
+source = "mic"
+
+[osd]
+# Waveform overlay while recording (bottom centre).
+enabled = true
+frontend = "gtk4"
+position = "bottom-center"
+width_px = 440
+height_px = 52
+margin_px = 24
+top_margin = 0.85
+opacity = 0.95
+waveform_window_secs = 3.0
+peak_decay_db_per_sec = 6.0
+waveform_gain = 10.0
+
+[status]
+icon_theme = "emoji"

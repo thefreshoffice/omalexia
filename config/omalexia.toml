@@ -1,0 +1,24 @@
+# Omalexia text-to-speech settings.
+# Copied to ~/.config/omalexia/config.toml on first install; `omalexia voice`
+# rewrites it, hand edits are fine too. The daemon reloads on save via
+# `omalexia voice ...` or `systemctl --user reload omalexia-speakd`.
+
+[tts]
+# 1.0 = the voice's natural pace. Super+F10 / Super+Shift+F10 nudge it.
+speed = 1.0
+# Used when the text is too short to tell Dutch from English: auto | en | nl
+default_language = "auto"
+
+[tts.voices]
+# Piper voices, downloaded to ~/.local/share/omalexia/voices.
+# "medium" voices start speaking within ~0.1 s; "high" ones sound richer but
+# take ~1 s per sentence on a CPU. See: omalexia voice list
+en = "en_US-lessac-medium"
+nl = "nl_NL-pim-medium"
+
+[tts.engines]
+# Per language: piper (default) or kokoro (English only, higher quality,
+# ~0.8 s to start; install with: omalexia voice engine en kokoro)
+
+[tts.kokoro]
+voice = "af_heart"

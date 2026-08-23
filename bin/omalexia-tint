@@ -1,0 +1,64 @@
+#!/usr/bin/env bash
+# omalexia-tint — warm "paper" tint for the whole screen.
+#
+# The British Dyslexia Association advises against bright white backgrounds.
+# Themes handle most of that, but web pages and PDFs are still white; this
+# warms every pixel via hyprsunset, like reading on cream paper. It is a
+# comfort setting, not a treatment — turn it off if it does nothing for you.
+#
+# Usage: omalexia-tint [toggle|on|off|status]
+set -euo pipefail
+
+ON_TEMP="${OMALEXIA_TINT_TEMP:-4900}"
+ON_GAMMA="${OMALEXIA_TINT_GAMMA:-92}"
+OFF_TEMP=6500
+OFF_GAMMA=100
+STATE_FILE="${XDG_STATE_HOME:-$HOME/.local/state}/omalexia/tint"
+
+action="${1:-toggle}"
+
+ensure_hyprsunset() {
+  if ! pgrep -x hyprsunset >/dev/null; then
+    setsid uwsm-app -- hyprsunset >/dev/null 2>&1 &
+    sleep 0.5
+  fi
+}
+
+apply() {
+  local temp="$1" gamma="$2"
+  ensure_hyprsunset
+  # A freshly started hyprsunset applies its own default at the end of boot,
+  # so resend until the value sticks (same trick as omarchy-toggle-nightlight).
+  for _ in {1..10}; do
+    hyprctl hyprsunset temperature "$temp" >/dev/null 2>&1 || true
+    hyprctl hyprsunset gamma "$gamma" >/dev/null 2>&1 || true
+    sleep 0.2
+    current="$(hyprctl hyprsunset temperature 2>/dev/null | grep -oE '[0-9]+' | head -n1 || true)"
+    [[ $current == "$temp" ]] && break
+  done
+  omarchy-shell -q nightlight refresh 2>/dev/null || true
+}
+
+on() {
+  mkdir -p "$(dirname "$STATE_FILE")"
+  apply "$ON_TEMP" "$ON_GAMMA"
+  : >"$STATE_FILE"
+  omarchy-notification-send -g "󰖙" --app-name omalexia "Paper tint on" 2>/dev/null || true
+}
+
+off() {
+  apply "$OFF_TEMP" "$OFF_GAMMA"
+  rm -f "$STATE_FILE"
+  omarchy-notification-send -g "󰖙" --app-name omalexia "Paper tint off" 2>/dev/null || true
+}
+
+case "$action" in
+  on) on ;;
+  off) off ;;
+  status) if [[ -f $STATE_FILE ]]; then echo on; else echo off; fi ;;
+  toggle) if [[ -f $STATE_FILE ]]; then off; else on; fi ;;
+  *)
+    echo "Usage: omalexia-tint [toggle|on|off|status]" >&2
+    exit 1
+    ;;
+esac

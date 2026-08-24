@@ -195,14 +195,19 @@ def read_aloud_status() -> dict:
         "language": str(cfg["default_language"]),
         "languageOptions": [{"value": "auto", "label": "Detect from the text"}]
         + [{"value": code, "label": LANG_NAMES.get(code, code)} for code in cfg["voices"]],
-        "voiceEn": str(cfg["voices"].get("en", "")),
-        "voiceNl": str(cfg["voices"].get("nl", "")),
-        "engineEn": str(cfg["engines"].get("en", "piper")),
+        "languages": [
+            {
+                "code": code,
+                "name": LANG_NAMES.get(code, code),
+                "voice": str(voice),
+                "engine": str(cfg["engines"].get(code, "piper")),
+                "options": voice_options(code, str(voice), have),
+            }
+            for code, voice in cfg["voices"].items()
+        ],
         "kokoroInstalled": kokoro,
-        "voicesEn": voice_options("en", str(cfg["voices"].get("en", "")), have),
-        "voicesNl": voice_options("nl", str(cfg["voices"].get("nl", "")), have),
-        "piperAvailable": run(["/usr/bin/python3", "-c", "import piper"], timeout=8) is not None
-        and run(["/usr/bin/python3", "-c", "import piper"], timeout=8).returncode == 0,
+        "piperAvailable": (piper_probe := run(["/usr/bin/python3", "-c", "import piper"], timeout=8)) is not None
+        and piper_probe.returncode == 0,
     }
 
 
@@ -342,8 +347,8 @@ def set_value(key: str, value: str) -> None:
         speakd_request({"cmd": "set", "speed": float(value)})
         OMALEXIA_STATE.mkdir(parents=True, exist_ok=True)
         (OMALEXIA_STATE / "speed").write_text(f"{float(value):.2f}\n")
-    elif key in ("voiceEn", "voiceNl"):
-        lang = "en" if key == "voiceEn" else "nl"
+    elif key.startswith("voice:"):
+        lang = key.split(":", 1)[1]
         # Downloads if needed; can take a while, so hand it to a terminal
         # when the voice is missing and do it inline when it is installed.
         if value in installed_voices():
@@ -392,6 +397,8 @@ def do_action(action: str, arg: str = "") -> None:
         detached([say, action])
     elif action == "test":
         detached([tool("omalexia-voice"), "test", arg or "en"])
+    elif action == "add-language":
+        detached(["omarchy-launch-floating-terminal-with-presentation", "omalexia-voice add"])
     elif action == "dictate":
         detached(["voxtype", "record", "toggle"])
     elif action == "dictate-cancel":

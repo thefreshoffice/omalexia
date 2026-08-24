@@ -46,7 +46,10 @@ Panel {
   readonly property var rows: {
     var keys = ["hero"]
     if (!omalexia.installed) return keys.concat(["install"])
-    keys.push("read.actions", "read.speed", "read.voiceEn", "read.voiceNl", "read.language", "read.test")
+    keys.push("read.actions", "read.speed")
+    var voiceLangs = read.languages || []
+    for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
+    keys.push("read.language", "read.test")
     if (showDictation) {
       if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback", "dict.showTyped")
       else keys.push("dict.install")
@@ -62,6 +65,7 @@ Panel {
 
   function actionCount(key) {
     if (key === "read.actions") return 4
+    if (key === "read.test") return 2
     if (key === "dict.actions") return 4
     if (key === "look.actions") return 2
     if (key === "footer") return 3
@@ -106,10 +110,10 @@ Panel {
     if (key === "read.speed") {
       var next = Math.max(0.5, Math.min(4.0, Number(read.speed || 1) + dx * 0.1))
       omalexia.set("speed", next.toFixed(1))
-    } else if (key === "read.voiceEn") {
-      omalexia.set("voiceEn", cycleOption(read.voicesEn, read.voiceEn, dx))
-    } else if (key === "read.voiceNl") {
-      omalexia.set("voiceNl", cycleOption(read.voicesNl, read.voiceNl, dx))
+    } else if (key.indexOf("read.voice.") === 0) {
+      var voiceCode = key.substring("read.voice.".length)
+      var voiceEntry = languageEntry(voiceCode)
+      if (voiceEntry) chooseVoice(voiceCode, cycleOption(voiceOptionsFor(voiceEntry), voiceValueFor(voiceEntry), dx))
     } else if (key === "read.language") {
       omalexia.set("language", cycleOption(languageOptions, read.language, dx))
     } else if (key === "dict.engine") {
@@ -126,6 +130,11 @@ Panel {
   function activateCursor() {
     ensureCursor()
     var key = cursorKey
+    if (key.indexOf("read.voice.") === 0) {
+      var row = rowItems[key]
+      if (row && row.toggle) row.toggle()
+      return
+    }
     switch (key) {
     case "hero": omalexia.toggleDaemon(); break
     case "install": omalexia.act("install"); break
@@ -135,9 +144,10 @@ Panel {
       else if (actionIndex === 2) { root.close(); omalexia.readScreen() }
       else omalexia.stopReading()
       break
-    case "read.test": omalexia.testVoice(read.language === "nl" ? "nl" : "en"); break
-    case "read.voiceEn": voiceEnDropdown.toggle(); break
-    case "read.voiceNl": voiceNlDropdown.toggle(); break
+    case "read.test":
+      if (actionIndex === 0) omalexia.testVoice(testLanguage())
+      else omalexia.act("add-language")
+      break
     case "read.language": languageDropdown.toggle(); break
     case "dict.actions":
       if (actionIndex === 0) omalexia.toggleDictation()
@@ -216,20 +226,37 @@ Panel {
     if (options.length === 0) options.push({ value: String(dictation.engine || "whisper"), label: String(dictation.engine || "whisper") })
     return options
   }
-  readonly property var voiceEnOptions: {
-    var options = (read.voicesEn || []).slice()
-    if (read.kokoroInstalled) options.push({ value: "kokoro", label: "Kokoro, premium (slower start)" })
-    else options.push({ value: "kokoro", label: "Kokoro, premium (installs ~350 MB)" })
+  function languageEntry(code) {
+    var langs = read.languages || []
+    for (var i = 0; i < langs.length; i++) if (String(langs[i].code) === String(code)) return langs[i]
+    return null
+  }
+
+  function voiceOptionsFor(entry) {
+    var options = ((entry && entry.options) || []).slice()
+    if (entry && String(entry.code) === "en") {
+      if (read.kokoroInstalled) options.push({ value: "kokoro", label: "Kokoro, premium (slower start)" })
+      else options.push({ value: "kokoro", label: "Kokoro, premium (installs ~350 MB)" })
+    }
     return options
   }
-  readonly property string voiceEnValue: read.engineEn === "kokoro" ? "kokoro" : String(read.voiceEn || "")
 
-  function chooseEnglishVoice(value) {
-    if (value === "kokoro") omalexia.set("engineEn", "kokoro")
-    else {
-      if (read.engineEn === "kokoro") omalexia.set("engineEn", "piper")
-      omalexia.set("voiceEn", value)
-    }
+  function voiceValueFor(entry) {
+    if (!entry) return ""
+    return String(entry.code) === "en" && String(entry.engine) === "kokoro" ? "kokoro" : String(entry.voice || "")
+  }
+
+  function chooseVoice(code, value) {
+    if (String(code) === "en" && value === "kokoro") { omalexia.set("engineEn", "kokoro"); return }
+    var entry = languageEntry(code)
+    if (String(code) === "en" && entry && String(entry.engine) === "kokoro") omalexia.set("engineEn", "piper")
+    omalexia.set("voice:" + code, value)
+  }
+
+  function testLanguage() {
+    if (read.language && read.language !== "auto") return String(read.language)
+    var langs = read.languages || []
+    return langs.length > 0 ? String(langs[0].code) : "en"
   }
 
   readonly property string heroMeta: {
@@ -429,28 +456,24 @@ Panel {
               onCommitted: function(v) { omalexia.set("speed", v.toFixed(1)) }
             }
 
-            DropdownRow {
-              id: voiceEnDropdown
-              rowKey: "read.voiceEn"
-              label: "English voice"
-              options: root.voiceEnOptions
-              current: root.voiceEnValue
-              onChosen: function(v) { root.chooseEnglishVoice(v) }
-            }
-
-            DropdownRow {
-              id: voiceNlDropdown
-              rowKey: "read.voiceNl"
-              label: "Dutch voice"
-              options: root.read.voicesNl || []
-              current: String(root.read.voiceNl || "")
-              onChosen: function(v) { omalexia.set("voiceNl", v) }
+            // One voice row per enabled language; `omalexia voice add`
+            // (the button below) grows this list.
+            Repeater {
+              model: root.read.languages || []
+              DropdownRow {
+                required property var modelData
+                rowKey: "read.voice." + String(modelData.code)
+                label: "Voice · " + String(modelData.name || modelData.code)
+                options: root.voiceOptionsFor(modelData)
+                current: root.voiceValueFor(modelData)
+                onChosen: function(v) { root.chooseVoice(String(modelData.code), v) }
+              }
             }
 
             DropdownRow {
               id: languageDropdown
               rowKey: "read.language"
-              label: "Language"
+              label: "Read in"
               options: root.languageOptions
               current: String(root.read.language || "auto")
               onChosen: function(v) { omalexia.set("language", v) }
@@ -459,8 +482,14 @@ Panel {
             ActionRow {
               rowKey: "read.test"
               compact: true
-              buttons: [{ icon: "󰙃", text: root.read.language === "nl" ? "Test de stem" : "Test the voice", tip: "Say a sentence with the current voice" }]
-              onTriggered: function(index) { omalexia.testVoice(root.read.language === "nl" ? "nl" : "en") }
+              buttons: [
+                { icon: "󰙃", text: "Test the voice", tip: "Say a sentence with the current voice" },
+                { icon: "󰗊", text: "Add a language", tip: "Enable another reading language (downloads a voice)" }
+              ]
+              onTriggered: function(index) {
+                if (index === 0) omalexia.testVoice(root.testLanguage())
+                else omalexia.act("add-language")
+              }
             }
           }
 

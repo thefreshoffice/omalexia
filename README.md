@@ -23,7 +23,7 @@ with one key each. **F9 = talk, F10 = listen.**
 | `F9` (hold) | Dictate; release to type it where the cursor is. (Omarchy default) |
 | `Super + Ctrl + X` | Dictation on/off for long text. (Omarchy default) |
 | `Shift + F9` | Cancel a dictation. |
-| `Super + R` | Reading mode: the focused window floats at a readable width, centred. |
+| `Super + R` | Reading mode: one clean reading window; everything else tucks away. |
 | `Super + Shift + R` | Warm "paper" tint on/off. |
 | `Super + Ctrl + Backspace` | Stops a lone window stretching across a wide monitor. (Omarchy default, switched on) |
 | `Super + Ctrl + Z` | Screen zoom. (Omarchy default) |
@@ -132,8 +132,11 @@ a local LLM pass later.
 - **Text size**: the installer sets `omarchy display text size 14` once
   (shell, GTK apps and terminals together); the menu offers 12–18.
 - **Reading mode** (`Super + R`): floats the focused window at
-  `min(1100 px, 60 % of the monitor)` width, 94 % height, centred; again to
-  re-tile. Inactive windows are dimmed 12 % so the eye lands on the right one.
+  `min(1100 px, 60 % of the monitor)` width, 94 % height, centred, and tucks
+  the workspace's other windows away so you face one clean window. `Super+R`
+  again brings everything back: the hidden windows return, and the reading
+  window goes back to where it was, exact position and size if it was
+  floating, back into the tiling layout on its own workspace if it was tiled.
 - **Narrow single window**: Omarchy's `single-window-aspect-ratio` toggle
   is switched on: a lone window on a wide monitor becomes square-ish instead
   of a 2400 px text line.

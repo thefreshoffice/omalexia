@@ -3,9 +3,12 @@
 #
 # Tiled windows on a wide monitor become very long lines of text, which is
 # hard to read for dyslexic readers (the BDA recommends 60–70 characters per
-# line). This floats the focused window at a comfortable reading width,
-# centred on its monitor; other windows are already dimmed by omalexia.lua.
-# Run it again to put the window back in the tiling layout.
+# line). Reading mode floats the focused window at a comfortable reading
+# width, centred on its monitor, and tucks the other windows of the same
+# workspace into a special workspace so the reader faces one clean window.
+# Run it again to undo everything: the hidden windows come back and the
+# window returns to its previous place, exact geometry if it was floating,
+# back into the tiling layout on its original workspace if it was tiled.
 #
 # Usage: omalexia-focus [toggle|on|off|status] [window-address]
 #
@@ -17,6 +20,7 @@ STATE_DIR="${XDG_STATE_HOME:-$HOME/.local/state}/omalexia/focus"
 MAX_WIDTH="${OMALEXIA_READING_WIDTH:-1100}" # logical pixels
 WIDTH_FRACTION="${OMALEXIA_READING_FRACTION:-0.60}"
 HEIGHT_FRACTION="${OMALEXIA_READING_HEIGHT:-0.94}"
+HIDE_WS="special:omalexia"
 
 action="${1:-toggle}"
 address="${2:-}"
@@ -37,13 +41,15 @@ if [[ -z $address ]]; then
   exit 1
 fi
 
-window="$(hyprctl clients -j | jq -c --arg a "$address" '.[] | select(.address == $a)')"
+clients="$(hyprctl clients -j)"
+window="$(jq -c --arg a "$address" '.[] | select(.address == $a)' <<<"$clients")"
 if [[ -z $window ]]; then
   echo "No window with address $address" >&2
   exit 1
 fi
 floating="$(jq -r '.floating' <<<"$window")"
 monitor_id="$(jq -r '.monitor' <<<"$window")"
+workspace_id="$(jq -r '.workspace.id' <<<"$window")"
 marker="$STATE_DIR/${address//\//_}"
 
 # Monitor geometry in logical pixels: position, size/scale, reserved edges
@@ -68,20 +74,76 @@ read -r width height pos_x pos_y < <(awk \
     printf "%d %d %d %d\n", w, h, x, y
   }')
 
+# Windows sharing the workspace that reading mode should tuck away:
+# mapped, not pinned, not the reading window itself.
+others_on_workspace() {
+  jq -r --arg a "$address" --argjson ws "$workspace_id" \
+    '.[] | select(.workspace.id == $ws and .address != $a and .mapped == true and .pinned != true) | .address' \
+    <<<"$clients"
+}
+
 reading_on() {
   mkdir -p "$STATE_DIR"
+  local others prior
+  others="$(others_on_workspace | jq -R . | jq -sc .)"
+  if [[ -f $marker ]]; then
+    # Already in reading mode: keep the original saved state, only add any
+    # windows that appeared since to the hidden list.
+    prior="$(cat "$marker")"
+    others="$(jq -c --argjson new "$others" '(.others + $new) | unique' <<<"$prior")"
+    jq -c --argjson others "$others" '.others = $others' <<<"$prior" >"$marker"
+  else
+    jq -cn --arg floating "$floating" --argjson ws "$workspace_id" \
+      --argjson x "$(jq '.at[0]' <<<"$window")" --argjson y "$(jq '.at[1]' <<<"$window")" \
+      --argjson w "$(jq '.size[0]' <<<"$window")" --argjson h "$(jq '.size[1]' <<<"$window")" \
+      --argjson others "$others" \
+      '{floating: $floating, workspace: $ws, x: $x, y: $y, w: $w, h: $h, others: $others}' >"$marker"
+  fi
+  local other
+  while IFS= read -r other; do
+    [[ -z $other ]] && continue
+    dispatch "hl.dsp.window.move({ window = 'address:$other', workspace = '$HIDE_WS', follow = false })"
+  done < <(others_on_workspace)
   if [[ $floating != "true" ]]; then
     dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'float' })"
   fi
   dispatch "hl.dsp.window.resize({ window = 'address:$address', x = $width, y = $height })"
   dispatch "hl.dsp.window.move({ window = 'address:$address', x = $pos_x, y = $pos_y })"
-  : >"$marker"
-  notify "Reading mode" "Window narrowed to ${width} px. Super+R again to tile it."
+  notify "Reading mode" "One clean window at ${width} px. Super+R brings everything back."
 }
 
 reading_off() {
-  rm -f "$marker"
-  if [[ $floating == "true" ]]; then
+  local saved_ws saved_floating other
+  if [[ -f $marker ]]; then
+    saved_ws="$(jq -r '.workspace' "$marker")"
+    saved_floating="$(jq -r '.floating' "$marker")"
+    # Bring back the windows reading mode hid, only those still hidden.
+    while IFS= read -r other; do
+      [[ -z $other ]] && continue
+      if jq -e --arg a "$other" '.[] | select(.address == $a and (.workspace.name == "special:omalexia"))' \
+          >/dev/null <<<"$clients"; then
+        dispatch "hl.dsp.window.move({ window = 'address:$other', workspace = '$saved_ws', follow = false })"
+      fi
+    done < <(jq -r '.others[]?' "$marker")
+    # The reading window sticks to its workspace: pull it back if it drifted.
+    if [[ $workspace_id != "$saved_ws" ]]; then
+      dispatch "hl.dsp.window.move({ window = 'address:$address', workspace = '$saved_ws', follow = false })"
+    fi
+    if [[ $saved_floating == "true" ]]; then
+      # It was floating before: restore the exact previous geometry.
+      local sx sy sw sh
+      sx="$(jq -r '.x' "$marker")"; sy="$(jq -r '.y' "$marker")"
+      sw="$(jq -r '.w' "$marker")"; sh="$(jq -r '.h' "$marker")"
+      if [[ $floating != "true" ]]; then
+        dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'float' })"
+      fi
+      dispatch "hl.dsp.window.resize({ window = 'address:$address', x = $sw, y = $sh })"
+      dispatch "hl.dsp.window.move({ window = 'address:$address', x = $sx, y = $sy })"
+    elif [[ $floating == "true" ]]; then
+      dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'tile' })"
+    fi
+    rm -f "$marker"
+  elif [[ $floating == "true" ]]; then
     dispatch "hl.dsp.window.float({ window = 'address:$address', action = 'tile' })"
   fi
   notify "Reading mode off"

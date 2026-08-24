@@ -592,7 +592,7 @@ Panel {
               rowKey: "look.actions"
               uniform: true
               buttons: [
-                { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "Float the focused window at a readable width (Super+R)" }
+                { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "One clean reading window; the rest tucks away (Super+R)" }
               ]
               onTriggered: function(index) { root.close(); omalexia.toggleReadingMode() }
             }

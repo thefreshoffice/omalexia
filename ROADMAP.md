@@ -115,6 +115,47 @@ that to a third party by default is the wrong trade for an accessibility tool.
       status line says out loud that text leaves the machine, and it is never
       selected by an installer default.
 
+## 1b. The path to Speechify and Apple quality (plan, 2026-08-25)
+
+Studying how the commercial leaders get their quality shows four
+ingredients, and none of them is a secret architecture: studio-grade
+per-voice training data, a text frontend with years of linguistics in it,
+compute placed where the model needs it (Speechify on cloud GPUs, Apple on
+its Neural Engine), and consent-based voice cloning that substitutes a
+short clean reference for the studio budget. Mapped to Omalexia, in order
+of value per effort:
+
+- [ ] **Text frontend** (copyable, cheap, helps every engine). Extend
+      `prepare_text` with number, date, currency and unit reading per
+      enabled language, an abbreviation lexicon, and a user dictionary for
+      names; the personal `replacements.txt` mechanism from dictation is
+      the model. Apple treats this as a co-equal pipeline stage next to
+      the model, and it is the main reason their voices never stumble.
+- [ ] **Listening gate for Chatterbox Dutch** (decides the next two).
+      Judge `~/.local/share/omalexia/spike/nl-1.wav` and `nl-2.wav`
+      against Piper's pim.
+- [ ] **Dutch reference voice** (the cloning shortcut). Record 30 to 60
+      seconds of clean Dutch speech, one voice, quiet room, and re-run the
+      Chatterbox spike with it as the reference instead of the default
+      English voice. This is exactly how Speechify makes celebrity voices,
+      minus the celebrity.
+- [ ] **Decoder on the Arc iGPU** (the Apple move, our hardware). The
+      measured split says the Chatterbox language model already runs
+      faster than real time on CPU (RTF 0.45) and only the fp32
+      flow-matching decoder (RTF 1.9) blocks interactive use. Convert the
+      decoder to OpenVINO, run it on the iGPU, keep the LM on CPU. Apple
+      solved precisely this bottleneck by putting the vocoder on the
+      Neural Engine.
+- [ ] **Watch for a studio-grade open Dutch dataset**, or help one exist.
+      The quality gap is at bottom a data gap: Kokoro proves 82M
+      parameters with curated data beats big models with scraped data. If
+      a clean multi-hour Dutch corpus appears (or the r-dh/dutch-vl-tts
+      dataset matures), training a Piper high or Kokoro-class Dutch voice
+      becomes the durable answer.
+- [ ] Not copyable, so not planned: per-language linguist teams and
+      private studio datasets. Cloud synthesis stays out per the
+      cloud-providers section above.
+
 ## 2. Investigate Voxtype properly
 
 Omalexia currently treats Voxtype as a black box that it reconfigures:

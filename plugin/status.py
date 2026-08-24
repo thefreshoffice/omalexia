@@ -308,8 +308,6 @@ def look_status() -> dict:
         "reducedMotion": (OMALEXIA_STATE / "reduced-motion").exists(),
         "narrowSingleWindow": SQUARE_TOGGLE.exists(),
         "readingMode": active_window_reading(),
-        "theme": read_text(STATE_HOME / "omarchy" / "current" / "theme.name") or Path(
-            os.path.realpath(STATE_HOME / "omarchy" / "current" / "theme")).name,
     }
 
 
@@ -413,8 +411,6 @@ def do_action(action: str, arg: str = "") -> None:
         detached(["omarchy-launch-config-editor", str(CONFIG_HOME / "omalexia" / "replacements.txt")])
     elif action == "reading-mode":
         detached([tool("omalexia-focus"), "toggle"])
-    elif action == "theme":
-        detached(["omarchy-theme-set", arg or "flexoki-light"])
     elif action == "keys":
         detached(["omarchy-launch-floating-terminal-with-presentation", "omalexia keys; read -r"])
     elif action == "menu":

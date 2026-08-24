@@ -67,7 +67,6 @@ Panel {
     if (key === "read.actions") return 4
     if (key === "read.test") return 2
     if (key === "dict.actions") return 4
-    if (key === "look.actions") return 2
     if (key === "footer") return 3
     return 1
   }
@@ -159,10 +158,7 @@ Panel {
     case "dict.engine": engineDropdown.toggle(); break
     case "dict.feedback": omalexia.set("feedback", dictation.feedback ? "false" : "true"); break
     case "dict.showTyped": omalexia.set("showTyped", dictation.showTyped ? "false" : "true"); break
-    case "look.actions":
-      if (actionIndex === 0) { root.close(); omalexia.toggleReadingMode() }
-      else omalexia.act("theme", "flexoki-light")
-      break
+    case "look.actions": root.close(); omalexia.toggleReadingMode(); break
     case "look.narrow": omalexia.set("narrowSingleWindow", look.narrowSingleWindow ? "false" : "true"); break
     case "look.tint": omalexia.set("tint", look.tint ? "false" : "true"); break
     case "look.motion": omalexia.set("reducedMotion", look.reducedMotion ? "false" : "true"); break
@@ -596,13 +592,9 @@ Panel {
               rowKey: "look.actions"
               uniform: true
               buttons: [
-                { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "Float the focused window at a readable width (Super+R)" },
-                { icon: "󰸌", text: "Cream theme", tip: "Flexoki Light: dark text on cream, as the BDA advises", enabled: String(root.look.theme || "") !== "flexoki-light" }
+                { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "Float the focused window at a readable width (Super+R)" }
               ]
-              onTriggered: function(index) {
-                if (index === 0) { root.close(); omalexia.toggleReadingMode() }
-                else omalexia.act("theme", "flexoki-light")
-              }
+              onTriggered: function(index) { root.close(); omalexia.toggleReadingMode() }
             }
 
             ToggleRow {

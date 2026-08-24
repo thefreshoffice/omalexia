@@ -28,7 +28,7 @@ daemon is off.
   Restart; the engine picker (Parakeet when its ONNX variant is enabled,
   otherwise a note about the sudo step); sound-on-record and show-typed-text
   switches, written straight into `~/.config/voxtype/config.toml`.
-- **Look**: Reading mode and Cream theme buttons; Narrow single window,
+- **Look**: the Reading mode button; Narrow single window,
   Paper tint and Reduced motion switches; the reading font and text size.
 - **Footer**: Keys (cheat sheet), Menu, Refresh.
 

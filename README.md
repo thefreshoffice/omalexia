@@ -139,9 +139,6 @@ a local LLM pass later.
   of a 2400 px text line.
 - **Paper tint** (`Super + Shift + R`): 4900 K / 92 % gamma via hyprsunset.
   Comfort, not treatment (see below).
-- **Cream theme**: `flexoki-light` is Omarchy's stock off-white theme and
-  matches the BDA advice (dark text on cream, never pure white); the menu
-  has a shortcut. Dark themes are fine too; pick the one that feels calm.
 - **Reduced motion**: `omalexia motion off` disables window animations.
 - Cursor 28 px, Qt accessibility on, OCR set to `eng+nld`, Dutch and English
   spell-check dictionaries (hunspell) for GTK apps and browsers.

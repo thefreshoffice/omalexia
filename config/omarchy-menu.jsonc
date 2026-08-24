@@ -44,7 +44,6 @@
   "omalexia.look.size.14": {"icon":"󰬴","label":"Comfortable (14)","action":"omarchy-display-text-size 14"},
   "omalexia.look.size.16": {"icon":"󰬴","label":"Large (16)","action":"omarchy-display-text-size 16"},
   "omalexia.look.size.18": {"icon":"󰬴","label":"Extra Large (18)","action":"omarchy-display-text-size 18"},
-  "omalexia.look.theme": {"icon":"󰸌","label":"Cream Theme (Flexoki Light)","action":"omarchy-theme-set flexoki-light"},
   "omalexia.keys": {"icon":"","label":"Keys","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia keys; read -r'"},
   "omalexia.status": {"icon":"","label":"Status","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia status; read -r'"},
   // omalexia:end

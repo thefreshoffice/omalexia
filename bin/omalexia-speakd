@@ -22,6 +22,7 @@ Uses /usr/bin/python3 on purpose: the piper module is installed system-wide
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -322,6 +323,7 @@ class KokoroEngine:
     Python 3.12 and its own onnxruntime). English only, higher quality."""
 
     name = "kokoro"
+    gap_ms = 80  # per-sentence calls lose the ~0.21 s pause the model renders
 
     def __init__(self, voice: str):
         python = KOKORO_DIR / ".venv" / "bin" / "python"
@@ -378,6 +380,13 @@ class Player:
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
+        # The default 64 KB pipe holds well under a second of audio, less
+        # than one sentence takes to synthesize, which turns every sentence
+        # boundary into an audible stall. Grow it; _run paces the lead.
+        try:
+            fcntl.fcntl(self.proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, 512 * 1024)
+        except OSError:
+            pass
 
     def write(self, data: bytes) -> bool:
         try:
@@ -592,15 +601,40 @@ class Daemon:
                     return
                 self.player = player
             last_speed = None
+            gap_ms = getattr(engine, "gap_ms", 0)
+            started = None  # when playback (first write) began
+            queued = 0.0    # seconds of audio handed to the player
+            lead_max = 4.0  # buffer this far ahead; also the ceiling on how
+                            # long a mid-text speed change can take to apply
+
+            def write_paced(pcm: bytes) -> bool:
+                nonlocal started, queued
+                while started is not None and not cancel.is_set():
+                    lead = queued - (time.monotonic() - started)
+                    if lead < lead_max:
+                        break
+                    cancel.wait(min(lead - lead_max, 0.2))
+                if cancel.is_set() or not player.write(pcm):
+                    return False
+                if started is None:
+                    started = time.monotonic()
+                queued += len(pcm) / 2 / engine.rate
+                return True
+
             for sentence in split_sentences(text):
                 if cancel.is_set():
                     break
                 now = speed if speed is not None else float(self.config["tts"]["speed"])
                 if last_speed is not None and now != last_speed:
                     log(f"speed {last_speed} -> {now} mid-utterance")
+                if last_speed is not None and gap_ms:
+                    pause = b"\x00\x00" * int(engine.rate * gap_ms / 1000 / now)
+                    if not write_paced(pause):
+                        cancel.set()
+                        break
                 last_speed = now
                 for pcm in engine.synthesize(sentence, now, cancel):
-                    if cancel.is_set() or not player.write(pcm):
+                    if not write_paced(pcm):
                         cancel.set()
                         break
             if not cancel.is_set():

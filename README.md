@@ -50,7 +50,10 @@ after the key press. The language is detected from the text, so a Dutch
 e-mail and an English doc both just work. It streams sentence by sentence
 through PipeWire and stops the instant you ask. The speed setting is read
 between sentences, so nudging it in the bar panel changes the pace of the
-text you are listening to, not just the next one.
+text you are listening to within a few seconds, not just the next one. The
+daemon keeps about four seconds of audio buffered ahead of playback, so the
+next sentence is synthesized while the current one plays and sentence
+boundaries stay seamless.
 
 Before speaking it unwraps hard line breaks (e-mails, terminals), drops
 markdown symbols, bullets and `#` headings, and reads URLs as their host

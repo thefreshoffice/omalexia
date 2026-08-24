@@ -431,7 +431,7 @@ Panel {
               uniform: true
               buttons: [
                 { icon: "󰗊", text: "Selection", tip: "Read the highlighted text (F10)" },
-                { icon: "", text: "Clipboard", tip: "Read the clipboard (Shift+F10)" },
+                { icon: "󰅍", text: "Clipboard", tip: "Read the clipboard (Shift+F10)" },
                 { icon: "󰴑", text: "Screen", tip: "Draw a box and read what is in it (Ctrl+F10)" },
                 { icon: "󰝛", text: "Stop", tip: "Stop reading", enabled: omalexia.speaking }
               ]
@@ -657,7 +657,7 @@ Panel {
             rowKey: "footer"
             uniform: true
             buttons: [
-              { icon: "", text: "Keys", tip: "The cheat sheet" },
+              { icon: "󰌌", text: "Keys", tip: "The cheat sheet" },
               { icon: "󰗊", text: "Menu", tip: "Omalexia in the Omarchy menu (Super+Alt+A)" },
               { icon: "󰑐", text: "Refresh", tip: "Re-read the settings" }
             ]
@@ -687,6 +687,18 @@ Panel {
     implicitHeight: flow.implicitHeight
     Component.onCompleted: root.registerRow(rowKey, actionRow)
 
+    // Tallest implicit height among the row's buttons; uniform rows pin
+    // every cell to it so icon-less buttons cannot render shorter.
+    property real cellHeight: 0
+    function updateCellHeight() {
+      var tallest = 0
+      for (var i = 0; i < flow.children.length; i++) {
+        var child = flow.children[i]
+        if (child && child.implicitHeight > tallest) tallest = child.implicitHeight
+      }
+      if (tallest > 0) cellHeight = tallest
+    }
+
     Flow {
       id: flow
       width: parent.width
@@ -706,6 +718,9 @@ Panel {
           width: actionRow.uniform && actionRow.buttons.length > 0
                  ? cellBase + (index === actionRow.buttons.length - 1 ? cellRemainder : 0)
                  : implicitWidth
+          height: actionRow.uniform && actionRow.cellHeight > 0 ? actionRow.cellHeight : implicitHeight
+          onImplicitHeightChanged: actionRow.updateCellHeight()
+          Component.onCompleted: actionRow.updateCellHeight()
           text: String(modelData.text || "")
           iconText: String(modelData.icon || "")
           tooltipText: String(modelData.tip || "")

@@ -215,8 +215,10 @@ for Omarchy. Everyone who wants to help is welcome, in whatever way fits:
 - Translations of the panel, menu and site.
 - Testing on other hardware, especially machines without a fast CPU.
 
-Open an issue at https://github.com/thefreshoffice/omalexia/issues to talk
-first, or send a pull request straight away. Keep changes local-first,
+[ROADMAP.md](ROADMAP.md) lists what is queued and what still needs
+measuring, including a bench of more speech engines and a proper look at
+Voxtype. Open an issue at https://github.com/thefreshoffice/omalexia/issues to
+talk first, or send a pull request straight away. Keep changes local-first,
 reversible with `omalexia off`, and one key away.
 
 ## License

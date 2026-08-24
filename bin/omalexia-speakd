@@ -349,20 +349,40 @@ class PiperEngine:
             yield chunk.audio_int16_bytes
 
 
-class KokoroEngine:
-    """Kokoro-82M through a worker process living in its own venv (it needs
-    Python 3.12 and its own onnxruntime). English only, higher quality."""
+# Languages the Kokoro-82M model actually ships voices for, with the kokoro
+# lang code and a good default voice each. English resolves its lang from
+# the voice prefix (af_/bf_).
+KOKORO_LANGS = {
+    "en": ("en-us", "af_heart"),
+    "es": ("es", "ef_dora"),
+    "fr": ("fr-fr", "ff_siwis"),
+    "hi": ("hi", "hf_alpha"),
+    "it": ("it", "if_sara"),
+    "ja": ("ja", "jf_alpha"),
+    "pt": ("pt-br", "pf_dora"),
+    "zh": ("cmn", "zf_xiaoxiao"),
+}
 
-    name = "kokoro"
-    gap_ms = 80  # per-sentence calls lose the ~0.21 s pause the model renders
 
-    def __init__(self, voice: str):
+class KokoroWorker:
+    """One Kokoro-82M worker process, shared by every Kokoro language so a
+    second language does not cost a second 300 MB model."""
+
+    _instance = None
+    _instance_lock = threading.Lock()
+
+    @classmethod
+    def shared(cls):
+        with cls._instance_lock:
+            if cls._instance is None or cls._instance.proc.poll() is not None:
+                cls._instance = cls()
+            return cls._instance
+
+    def __init__(self):
         python = KOKORO_DIR / ".venv" / "bin" / "python"
         worker = KOKORO_DIR / "worker.py"
         if not python.exists() or not worker.exists():
             raise FileNotFoundError("kokoro is not installed (run: omalexia voice install kokoro)")
-        self.voice_name = voice
-        self.rate = 24000
         self.proc = subprocess.Popen(
             [str(python), str(worker)],
             stdin=subprocess.PIPE,
@@ -371,26 +391,52 @@ class KokoroEngine:
             cwd=KOKORO_DIR,
         )
         self.lock = threading.Lock()
-        # Wait for the worker's ready line.
         line = self.proc.stdout.readline()
         if not line.startswith(b"ready"):
             raise RuntimeError("kokoro worker failed to start")
-        log(f"kokoro: worker ready ({voice})")
+        log("kokoro: worker ready")
+
+
+class KokoroEngine:
+    """Kokoro-82M for one language, through the shared worker process
+    (its venv has Python 3.12 and its own onnxruntime)."""
+
+    name = "kokoro"
+    gap_ms = 80  # per-sentence calls lose the ~0.21 s pause the model renders
+
+    def __init__(self, voice: str, lang: str = "en"):
+        default_lang, default_voice = KOKORO_LANGS.get(lang, KOKORO_LANGS["en"])
+        self.voice_name = voice or default_voice
+        if lang == "en":
+            self.lang = "en-gb" if self.voice_name.startswith("b") else "en-us"
+        else:
+            self.lang = default_lang
+        self.rate = 24000
+        self.worker = KokoroWorker.shared()
+        log(f"kokoro: engine for {lang} ({self.voice_name}, {self.lang})")
+
+    @property
+    def proc(self):
+        # reload()/eviction kill engines via .proc; the shared worker dies
+        # with the last engine holding it, and shared() restarts it on need.
+        return self.worker.proc
 
     def synthesize(self, text: str, speed: float, cancel: threading.Event):
-        lang = "en-gb" if self.voice_name.startswith("b") else "en-us"
-        req = json.dumps({"text": text, "voice": self.voice_name, "speed": speed, "lang": lang})
-        with self.lock:
-            self.proc.stdin.write(req.encode() + b"\n")
-            self.proc.stdin.flush()
+        req = json.dumps({"text": text, "voice": self.voice_name, "speed": speed, "lang": self.lang})
+        worker = self.worker
+        if worker.proc.poll() is not None:
+            worker = self.worker = KokoroWorker.shared()
+        with worker.lock:
+            worker.proc.stdin.write(req.encode() + b"\n")
+            worker.proc.stdin.flush()
             while True:
-                header = self.proc.stdout.read(4)
+                header = worker.proc.stdout.read(4)
                 if len(header) < 4:
                     return
                 n = int.from_bytes(header, "little")
                 if n == 0:
                     return
-                data = self.proc.stdout.read(n)
+                data = worker.proc.stdout.read(n)
                 if cancel.is_set():
                     # Drain the rest so the worker stays in sync.
                     continue
@@ -494,9 +540,11 @@ class Daemon:
         tts = self.config["tts"]
         wanted = tts["engines"].get(lang, "piper")
         engine = None
-        if wanted == "kokoro" and lang == "en":
+        if wanted == "kokoro" and lang in KOKORO_LANGS:
+            kokoro_voice = tts["kokoro"].get(lang) or (
+                tts["kokoro"].get("voice") if lang == "en" else None)
             try:
-                engine = KokoroEngine(tts["kokoro"].get("voice", "af_heart"))
+                engine = KokoroEngine(kokoro_voice, lang)
             except Exception as exc:  # noqa: BLE001
                 log(f"kokoro unavailable, falling back to piper: {exc}")
         if engine is None:

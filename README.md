@@ -89,9 +89,12 @@ characters like ß, ñ or ő. Only the three most recently used voices are kept
 loaded, so enabling ten languages costs disk, not memory.
 
 Optional: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is the
-best-sounding local English voice that still runs on a CPU (~0.8 s to first
-word here, no Dutch). `omalexia voice engine en kokoro` installs it into its
-own venv (~350 MB) and switches English to it; Dutch stays on Piper. Once
+best-sounding local voice that still runs on a CPU (~0.8 s to first word
+here). It speaks English, Spanish, French, Hindi, Italian, Japanese,
+Portuguese and Chinese; `omalexia voice engine fr kokoro` switches any of
+those languages to it (the first use installs its venv, ~350 MB). One shared
+worker serves all Kokoro languages, so each extra language costs nothing.
+Dutch is the notable gap; it stays on Piper. Once
 enabled it is loaded at daemon start and kept loaded: settings changes reload
 only the voices they touch, and when the recently-used cap evicts a voice it
 picks a Piper one first, so Kokoro answers at synthesis speed (about 0.7 s

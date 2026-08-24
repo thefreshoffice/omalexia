@@ -230,7 +230,7 @@ Panel {
 
   function voiceOptionsFor(entry) {
     var options = ((entry && entry.options) || []).slice()
-    if (entry && String(entry.code) === "en") {
+    if (entry && entry.kokoroCapable === true) {
       if (read.kokoroInstalled) options.push({ value: "kokoro", label: "Kokoro, premium (slower start)" })
       else options.push({ value: "kokoro", label: "Kokoro, premium (installs ~350 MB)" })
     }
@@ -239,13 +239,13 @@ Panel {
 
   function voiceValueFor(entry) {
     if (!entry) return ""
-    return String(entry.code) === "en" && String(entry.engine) === "kokoro" ? "kokoro" : String(entry.voice || "")
+    return String(entry.engine) === "kokoro" ? "kokoro" : String(entry.voice || "")
   }
 
   function chooseVoice(code, value) {
-    if (String(code) === "en" && value === "kokoro") { omalexia.set("engineEn", "kokoro"); return }
+    if (value === "kokoro") { omalexia.set("engine:" + code, "kokoro"); return }
     var entry = languageEntry(code)
-    if (String(code) === "en" && entry && String(entry.engine) === "kokoro") omalexia.set("engineEn", "piper")
+    if (entry && String(entry.engine) === "kokoro") omalexia.set("engine:" + code, "piper")
     omalexia.set("voice:" + code, value)
   }
 

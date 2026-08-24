@@ -201,6 +201,7 @@ def read_aloud_status() -> dict:
                 "name": LANG_NAMES.get(code, code),
                 "voice": str(voice),
                 "engine": str(cfg["engines"].get(code, "piper")),
+                "kokoroCapable": code in ("en", "es", "fr", "hi", "it", "ja", "pt", "zh"),
                 "options": voice_options(code, str(voice), have),
             }
             for code, voice in cfg["voices"].items()
@@ -353,11 +354,12 @@ def set_value(key: str, value: str) -> None:
             run([tool("omalexia-voice"), "set", lang, value], timeout=30)
         else:
             detached(["omarchy-launch-floating-terminal-with-presentation", f"omalexia-voice set {lang} {value}"])
-    elif key == "engineEn":
+    elif key == "engineEn" or key.startswith("engine:"):
+        lang = "en" if key == "engineEn" else key.split(":", 1)[1]
         if value == "kokoro" and not (KOKORO_DIR / ".venv").exists():
-            detached(["omarchy-launch-floating-terminal-with-presentation", "omalexia-voice engine en kokoro"])
+            detached(["omarchy-launch-floating-terminal-with-presentation", f"omalexia-voice engine {lang} kokoro"])
         else:
-            run([tool("omalexia-voice"), "engine", "en", value], timeout=30)
+            run([tool("omalexia-voice"), "engine", lang, value], timeout=30)
     elif key == "language":
         run([tool("omalexia-voice"), "language", value], timeout=15)
     elif key == "daemon":

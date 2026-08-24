@@ -102,19 +102,20 @@ Item {
   function applyOptimistic(key, value) {
     function clone(o) { return JSON.parse(JSON.stringify(o || ({}))) }
     var truthy = value === "true"
-    if (key === "speed" || key === "language" || key === "engineEn" || key === "daemon"
-        || key.indexOf("voice:") === 0) {
+    if (key === "speed" || key === "language" || key === "daemon"
+        || key.indexOf("voice:") === 0 || key.indexOf("engine:") === 0) {
       var r = clone(read)
       if (key === "speed") r.speed = Number(value)
       else if (key === "language") r.language = value
       else if (key === "daemon") r.daemonActive = truthy
       else {
-        var code = key === "engineEn" ? "en" : key.substring(6)
+        var isEngine = key.indexOf("engine:") === 0
+        var code = key.substring(isEngine ? 7 : 6)
         var langs = r.languages || []
         for (var i = 0; i < langs.length; i++) {
           if (langs[i].code !== code) continue
-          if (key === "engineEn") langs[i].engine = value
-          else { langs[i].voice = value; if (code === "en") langs[i].engine = "piper" }
+          if (isEngine) langs[i].engine = value
+          else { langs[i].voice = value; langs[i].engine = "piper" }
         }
       }
       read = r

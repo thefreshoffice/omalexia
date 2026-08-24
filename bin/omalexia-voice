@@ -10,7 +10,8 @@ Usage:
   omalexia-voice install NAME [NAME...]     download Piper voices (e.g. nl_NL-pim-medium)
   omalexia-voice install kokoro             install the optional Kokoro English engine
   omalexia-voice set LANG NAME              use NAME for that language (installs it if needed)
-  omalexia-voice engine en piper|kokoro     pick the English engine
+  omalexia-voice engine LANG piper|kokoro   pick the engine (kokoro speaks
+                                            en es fr hi it ja pt zh)
   omalexia-voice language auto|LANG         default when the language cannot be detected
   omalexia-voice test [LANG]                say a test sentence
 
@@ -37,6 +38,7 @@ CONFIG_PATH = CONFIG_DIR / "config.toml"
 DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") / "omalexia"
 VOICES_DIR = DATA_HOME / "voices"
 KOKORO_DIR = DATA_HOME / "kokoro"
+KOKORO_LANGS = ("en", "es", "fr", "hi", "it", "ja", "pt", "zh")
 KOKORO_FILES = {
     "kokoro-v1.0.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
     "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
@@ -372,8 +374,8 @@ def main(argv: list[str]) -> int:
         if engine not in ("piper", "kokoro"):
             print("engine must be piper or kokoro", file=sys.stderr)
             return 1
-        if engine == "kokoro" and lang != "en":
-            print("kokoro only speaks English", file=sys.stderr)
+        if engine == "kokoro" and lang not in KOKORO_LANGS:
+            print(f"kokoro speaks {' '.join(KOKORO_LANGS)}; use piper for {lang}", file=sys.stderr)
             return 1
         if engine == "kokoro" and not (KOKORO_DIR / ".venv").exists():
             if not install_kokoro():

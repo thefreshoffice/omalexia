@@ -366,10 +366,15 @@ Panel {
             }
           }
 
+          // Always one line tall so appearing or clearing never reflows
+          // the rows below it (that reflow was the panel "jump").
           Text {
-            visible: omalexia.actionStatus !== "" || omalexia.lastError !== ""
             width: parent.width
-            text: omalexia.actionStatus !== "" ? omalexia.actionStatus : omalexia.lastError
+            text: {
+              if (omalexia.actionStatus !== "") return omalexia.actionStatus
+              if (omalexia.lastError !== "") return omalexia.lastError
+              return " "
+            }
             color: omalexia.lastError !== "" && omalexia.actionStatus === "" ? root.urgent : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
@@ -398,6 +403,7 @@ Panel {
 
             ActionRow {
               rowKey: "read.actions"
+              uniform: true
               buttons: [
                 { icon: "󰗊", text: "Selection", tip: "Read the highlighted text (F10)" },
                 { icon: "", text: "Clipboard", tip: "Read the clipboard (Shift+F10)" },
@@ -493,6 +499,7 @@ Panel {
             ActionRow {
               visible: root.dictationInstalled
               rowKey: "dict.actions"
+              uniform: true
               buttons: [
                 { icon: omalexia.recording ? "󰓛" : "󰑊", text: omalexia.recording ? "Stop" : "Dictate", tip: "Start or stop dictation (Super+Ctrl+X, or hold F9)" },
                 { icon: "󰜺", text: "Cancel", tip: "Discard the current recording (Shift+F9)", enabled: omalexia.recording || omalexia.transcribing },
@@ -644,6 +651,7 @@ Panel {
     property string rowKey: ""
     property var buttons: []
     property bool compact: false
+    property bool uniform: false   // equal-width buttons filling the row
     signal triggered(int index)
 
     width: parent ? parent.width : implicitWidth
@@ -660,6 +668,9 @@ Panel {
         Button {
           required property var modelData
           required property int index
+          width: actionRow.uniform && actionRow.buttons.length > 0
+                 ? Math.floor((flow.width - flow.spacing * (actionRow.buttons.length - 1)) / actionRow.buttons.length)
+                 : implicitWidth
           text: String(modelData.text || "")
           iconText: String(modelData.icon || "")
           tooltipText: String(modelData.tip || "")

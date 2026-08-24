@@ -151,18 +151,30 @@ def installed_voices() -> list[str]:
         return []
 
 
+def pretty_voice(name: str) -> str:
+    """en_GB-alba-medium -> "Alba (GB, medium)"; falls back to the raw name."""
+    try:
+        code, speaker, quality = name.split("-", 2)
+        region = code.split("_", 1)[1]
+        label = speaker.replace("_", " ").title()
+        return f"{label} ({region}, {quality.replace('_', ' ')})"
+    except ValueError:
+        return name
+
+
 def voice_options(lang: str, current: str, have: list[str]) -> list[dict]:
     options = []
     seen = set()
-    for name, label in VOICES[lang]:
-        options.append({"value": name, "label": label + ("" if name in have else "  ↓"), "installed": name in have})
+    for name, label in VOICES.get(lang, []):
+        suffix = "" if name in have else " · download"
+        options.append({"value": name, "label": label + suffix, "installed": name in have})
         seen.add(name)
     for name in have:
         if name.startswith(lang + "_") and name not in seen:
-            options.append({"value": name, "label": name, "installed": True})
+            options.append({"value": name, "label": pretty_voice(name), "installed": True})
             seen.add(name)
     if current and current not in seen:
-        options.append({"value": current, "label": current, "installed": current in have})
+        options.append({"value": current, "label": pretty_voice(current), "installed": current in have})
     return options
 
 

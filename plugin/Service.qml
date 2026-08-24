@@ -92,7 +92,42 @@ Item {
   property var pendingOps: []
 
   function set(key, value) {
+    applyOptimistic(String(key), String(value))
     enqueue(["/usr/bin/python3", helperPath, "set", String(key), String(value)], "Applying…")
+  }
+
+  // Reflect a change in the local snapshot immediately so controls settle
+  // where the user put them instead of bouncing back to the stale value
+  // until status.py answers. The next snapshot confirms (or corrects).
+  function applyOptimistic(key, value) {
+    function clone(o) { return JSON.parse(JSON.stringify(o || ({}))) }
+    var truthy = value === "true"
+    if (key === "speed" || key === "language" || key === "voiceEn" || key === "voiceNl"
+        || key === "engineEn" || key === "daemon") {
+      var r = clone(read)
+      if (key === "speed") r.speed = Number(value)
+      else if (key === "language") r.language = value
+      else if (key === "voiceEn") { r.voiceEn = value; r.engineEn = "piper" }
+      else if (key === "voiceNl") r.voiceNl = value
+      else if (key === "engineEn") r.engineEn = value
+      else r.daemonActive = truthy
+      read = r
+    } else if (key === "dictationEngine" || key === "feedback" || key === "showTyped") {
+      var d = clone(dictation)
+      if (key === "dictationEngine") d.engine = value
+      else if (key === "feedback") d.feedback = truthy
+      else d.showTyped = truthy
+      dictation = d
+    } else if (key === "narrowSingleWindow" || key === "tint" || key === "reducedMotion"
+               || key === "font" || key === "textSize") {
+      var l = clone(look)
+      if (key === "narrowSingleWindow") l.narrowSingleWindow = truthy
+      else if (key === "tint") l.tint = truthy
+      else if (key === "reducedMotion") l.reducedMotion = truthy
+      else if (key === "font") l.font = value
+      else l.textSize = Number(value)
+      look = l
+    }
   }
 
   function act(action, arg) {
@@ -107,13 +142,25 @@ Item {
     pumpOps()
   }
 
+  property string pendingStatusText: ""
+
   function pumpOps() {
     if (opProcess.running || pendingOps.length === 0) return
     var next = pendingOps[0]
     pendingOps = pendingOps.slice(1)
-    actionStatus = next.status
+    // Show the status only if the operation turns out to be slow; a fast
+    // one finishes silently instead of flashing text at the user.
+    pendingStatusText = next.status
+    slowOpTimer.restart()
     opProcess.command = next.cmd
     opProcess.running = true
+  }
+
+  Timer {
+    id: slowOpTimer
+    interval: 350
+    repeat: false
+    onTriggered: if (opProcess.running) root.actionStatus = root.pendingStatusText
   }
 
   function readSelection() { act("selection") }
@@ -158,6 +205,7 @@ Item {
     stdout: StdioCollector { id: opOut; waitForEnd: true }
     stderr: StdioCollector { id: opErr; waitForEnd: true }
     onExited: function(exitCode) {
+      slowOpTimer.stop()
       root.actionStatus = ""
       if (exitCode === 0) root.applySnapshot(opOut.text)
       else root.lastError = String(opErr.text || opOut.text || "Omalexia command failed").trim()

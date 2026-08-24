@@ -216,6 +216,51 @@ it only pays off if a better Dutch-capable model exists to spend it on, which
 per Part 1 it currently does not. So the ordering is: solve quality first, and
 treat the NPU as the thing that makes the answer affordable afterwards.
 
+## Addendum 2026-08-25: the hunt for Kokoro-grade languages
+
+Measured follow-up on the "Dutch cannot get better" conclusion.
+
+**Kokoro already speaks eight languages.** The installed Kokoro-82M ships
+voices for Spanish, French, Hindi, Italian, Japanese, Brazilian Portuguese
+and Mandarin next to English; only Omalexia's engine gate said "English
+only". The gate now matches the model, so those languages get Kokoro
+quality today. Measured here: French 4.5 s of audio in 1.8 s, Italian 4.6 s
+in 2.8 s. Still no Dutch in the model.
+
+**Chatterbox Multilingual is real but not yet fast enough on CPU.** The MIT
+500M model covers Dutch, and a community ONNX export with a q4-quantised
+language model exists. Measured on this machine (8 threads, int4 LM, fp32
+decoder):
+
+| stage | time | rate |
+|---|---|---|
+| sessions load (cold) | 30 s | one-time |
+| speech encoder (per voice) | 0.3 s | cacheable |
+| language model | 1.4 s / sentence | 58 tok/s, RTF ~0.45 |
+| S3Gen decoder | 6.0 s / sentence | RTF ~1.9 |
+| total | 7.4 s for ~3 s audio | RTF ~2.4 |
+
+The surprise is the split: the autoregressive language model is already
+fast enough, and the bottleneck is the convolutional flow-matching decoder,
+which is exactly the kind of network that offloads well. Two paths, in
+order of promise:
+
+1. Run the decoder through OpenVINO on the Arc iGPU (LM stays on CPU).
+   A 4x decoder speedup puts the whole pipeline under real time.
+2. An int8 quantisation of the decoder (it is fp32 today, 534 MB) for a
+   CPU-only 2-3x, which lands at the edge of viable.
+
+Two Dutch samples for a quality verdict sit in
+`~/.local/share/omalexia/spike/nl-1.wav` and `nl-2.wav` (default English
+reference voice, so the accent judgement matters): listen before investing
+in either path. If the quality does not clearly beat `nl_NL-pim-medium`,
+neither path is worth the memory footprint (~1.5 GB resident).
+
+**Ruled out for Dutch:** Chatterbox-Nano (110M, CPU-fast, but English
+only), Qwen3-TTS and Kokoro (no Dutch), Parkiet (1.6B Dutch model, GPU
+class), XTTS v2 (non-commercial), MMS-TTS-nld (Piper-class quality, no
+gain), MeloTTS (no Dutch).
+
 ## What to do next
 
 In order:

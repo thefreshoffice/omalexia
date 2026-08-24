@@ -70,6 +70,12 @@ architecture.
 - [ ] Improve text normalisation ahead of the engine: abbreviations, numbers,
       dates, currency, Dutch compounds. This is where synthetic speech most
       often sounds wrong and it is fixable with rules, not with a bigger model.
+- [ ] Listen to the two Chatterbox Dutch samples in
+      `~/.local/share/omalexia/spike/` (see the investigation addendum). If
+      they clearly beat Piper's pim, spike the S3Gen decoder on the Arc iGPU
+      via OpenVINO: the measured CPU split (LM RTF 0.45, decoder RTF 1.9)
+      says that is the one piece standing between Chatterbox Dutch and
+      real-time.
 - [ ] Re-test Supertonic 3. It was rejected at roughly 5 s per sentence on
       CPU. Worth one more run if a faster CPU path appears.
 - [ ] Evaluate `espeak-ng` as a deliberate last-resort engine. It sounds

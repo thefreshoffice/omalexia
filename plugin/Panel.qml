@@ -480,7 +480,6 @@ Panel {
 
             ActionRow {
               rowKey: "read.test"
-              compact: true
               uniform: true
               buttons: [
                 { icon: "󰙃", text: "Test the voice", tip: "Say a sentence with the current voice" },
@@ -656,7 +655,6 @@ Panel {
           ActionRow {
             visible: omalexia.installed
             rowKey: "footer"
-            compact: true
             uniform: true
             buttons: [
               { icon: "", text: "Keys", tip: "The cheat sheet" },
@@ -699,8 +697,14 @@ Panel {
         Button {
           required property var modelData
           required property int index
+          readonly property int cellBase: actionRow.buttons.length > 0
+            ? Math.floor((flow.width - flow.spacing * (actionRow.buttons.length - 1)) / actionRow.buttons.length)
+            : 0
+          readonly property int cellRemainder: actionRow.buttons.length > 0
+            ? (flow.width - flow.spacing * (actionRow.buttons.length - 1)) - cellBase * actionRow.buttons.length
+            : 0
           width: actionRow.uniform && actionRow.buttons.length > 0
-                 ? Math.floor((flow.width - flow.spacing * (actionRow.buttons.length - 1)) / actionRow.buttons.length)
+                 ? cellBase + (index === actionRow.buttons.length - 1 ? cellRemainder : 0)
                  : implicitWidth
           text: String(modelData.text || "")
           iconText: String(modelData.icon || "")

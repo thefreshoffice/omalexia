@@ -481,6 +481,7 @@ Panel {
             ActionRow {
               rowKey: "read.test"
               compact: true
+              uniform: true
               buttons: [
                 { icon: "󰙃", text: "Test the voice", tip: "Say a sentence with the current voice" },
                 { icon: "󰗊", text: "Add a language", tip: "Enable another reading language (downloads a voice)" }
@@ -594,6 +595,7 @@ Panel {
 
             ActionRow {
               rowKey: "look.actions"
+              uniform: true
               buttons: [
                 { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "Float the focused window at a readable width (Super+R)" },
                 { icon: "󰸌", text: "Cream theme", tip: "Flexoki Light: dark text on cream, as the BDA advises", enabled: String(root.look.theme || "") !== "flexoki-light" }
@@ -655,6 +657,7 @@ Panel {
             visible: omalexia.installed
             rowKey: "footer"
             compact: true
+            uniform: true
             buttons: [
               { icon: "", text: "Keys", tip: "The cheat sheet" },
               { icon: "󰗊", text: "Menu", tip: "Omalexia in the Omarchy menu (Super+Alt+A)" },
@@ -742,17 +745,17 @@ Panel {
       anchors.left: parent.left
       anchors.right: parent.right
       anchors.verticalCenter: parent.verticalCenter
-      anchors.leftMargin: Style.space(10)
-      anchors.rightMargin: Style.space(10)
       spacing: Style.space(4)
 
       Row {
         width: parent.width
+        // Same label treatment as the dropdown rows, so every row in the
+        // section shares one label style and one left edge.
         Text {
           text: sliderRow.label
-          color: root.foreground
+          color: Qt.darker(root.foreground, 1.4)
           font.family: root.fontFamily
-          font.pixelSize: Style.font.subtitle
+          font.pixelSize: Style.font.caption
           font.bold: true
           width: parent.width - valueLabel.implicitWidth
           elide: Text.ElideRight
@@ -762,7 +765,8 @@ Panel {
           text: sliderRow.valueText
           color: root.dim
           font.family: root.fontFamily
-          font.pixelSize: Style.font.body
+          font.pixelSize: Style.font.caption
+          font.bold: true
         }
       }
 

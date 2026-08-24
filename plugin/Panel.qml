@@ -260,6 +260,7 @@ Panel {
   }
 
   readonly property string heroMeta: {
+    if (omalexia.actionStatus !== "") return omalexia.actionStatus
     if (!omalexia.installed) return "Not installed"
     if (omalexia.recording) return "Listening"
     if (omalexia.transcribing) return "Typing what you said"
@@ -308,7 +309,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(700))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(860))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -393,16 +394,13 @@ Panel {
             }
           }
 
-          // Always one line tall so appearing or clearing never reflows
-          // the rows below it (that reflow was the panel "jump").
+          // Routine feedback lives in the hero meta; this row exists only
+          // for real errors, which are rare enough that its reflow is fine.
           Text {
+            visible: omalexia.lastError !== ""
             width: parent.width
-            text: {
-              if (omalexia.actionStatus !== "") return omalexia.actionStatus
-              if (omalexia.lastError !== "") return omalexia.lastError
-              return " "
-            }
-            color: omalexia.lastError !== "" && omalexia.actionStatus === "" ? root.urgent : root.dim
+            text: omalexia.lastError
+            color: root.urgent
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
@@ -448,6 +446,7 @@ Panel {
             SliderRow {
               rowKey: "read.speed"
               label: "Speed"
+              tickValues: [1, 2, 3]
               valueText: Number(root.read.speed || 1).toFixed(1) + "×"
               value: Number(root.read.speed || 1)
               minimum: 0.5
@@ -727,6 +726,7 @@ Panel {
     property real minimum: 0
     property real maximum: 1
     property real step: 0.1
+    property var tickValues: []
     signal committed(real value)
 
     width: parent ? parent.width : implicitWidth
@@ -767,14 +767,32 @@ Panel {
       }
 
       PanelSlider {
+        id: sliderControl
         width: parent.width
         bar: root.bar
         value: sliderRow.value
         minimum: sliderRow.minimum
         maximum: sliderRow.maximum
         step: sliderRow.step
-        tickCount: 4
         onReleased: function(v) { sliderRow.committed(v) }
+
+        Repeater {
+          model: sliderRow.tickValues
+          Rectangle {
+            required property var modelData
+            readonly property real fraction: (Number(modelData) - sliderRow.minimum)
+                                             / Math.max(0.0001, sliderRow.maximum - sliderRow.minimum)
+            readonly property real centerX: sliderControl.width * fraction
+            width: Math.max(1, Style.space(2))
+            height: sliderControl.trackHeight + Style.space(4)
+            radius: 1
+            color: root.bar ? root.bar.background : Color.background
+            anchors.verticalCenter: parent.verticalCenter
+            x: Math.max(0, Math.min(sliderControl.width - width, centerX - width / 2))
+            visible: Math.abs(sliderControl.width * sliderControl.progress - centerX)
+                     > sliderControl.knobSize / 2 + Style.space(2)
+          }
+        }
       }
     }
   }

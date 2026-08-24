@@ -40,6 +40,15 @@ VOXTYPE_MODELS = DATA_HOME / "voxtype" / "models"
 VOXTYPE_STATE = RUNTIME / "voxtype" / "state"
 SQUARE_TOGGLE = STATE_HOME / "omarchy" / "toggles" / "hypr" / "single-window-aspect-ratio.lua"
 
+LANG_NAMES = {
+    "en": "English", "nl": "Nederlands", "de": "Deutsch", "fr": "Français",
+    "es": "Español", "it": "Italiano", "pt": "Português", "da": "Dansk",
+    "sv": "Svenska", "no": "Norsk", "fi": "Suomi", "pl": "Polski",
+    "cs": "Čeština", "ro": "Română", "hu": "Magyar", "tr": "Türkçe",
+    "ru": "Русский", "uk": "Українська", "el": "Ελληνικά", "ar": "العربية",
+    "zh": "中文", "ja": "日本語", "ko": "한국어", "hi": "हिन्दी", "vi": "Tiếng Việt",
+}
+
 VOICES = {
     "en": [
         ("en_US-lessac-medium", "Lessac (US)"),
@@ -172,6 +181,8 @@ def read_aloud_status() -> dict:
         "text": str(live.get("text") or ""),
         "speed": round(speed, 2),
         "language": str(cfg["default_language"]),
+        "languageOptions": [{"value": "auto", "label": "Detect from the text"}]
+        + [{"value": code, "label": LANG_NAMES.get(code, code)} for code in cfg["voices"]],
         "voiceEn": str(cfg["voices"].get("en", "")),
         "voiceNl": str(cfg["voices"].get("nl", "")),
         "engineEn": str(cfg["engines"].get("en", "piper")),

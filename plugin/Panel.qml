@@ -192,11 +192,17 @@ Panel {
     rowItems = next
   }
 
-  readonly property var languageOptions: [
-    { value: "auto", label: "Detect from the text" },
-    { value: "en", label: "English" },
-    { value: "nl", label: "Nederlands" }
-  ]
+  readonly property var languageOptions: {
+    // The daemon reads any language with an enabled voice; the options come
+    // from the config via status.py so `omalexia voice add de` shows up here.
+    var fromStatus = read.languageOptions || []
+    if (fromStatus.length > 1) return fromStatus
+    return [
+      { value: "auto", label: "Detect from the text" },
+      { value: "en", label: "English" },
+      { value: "nl", label: "Nederlands" }
+    ]
+  }
   readonly property var sizeOptions: [
     { value: "12", label: "Normal (12)" },
     { value: "14", label: "Comfortable (14)" },

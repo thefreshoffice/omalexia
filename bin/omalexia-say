@@ -2,7 +2,7 @@
 """omalexia-say: read text aloud with the local Omalexia voice.
 
 Usage:
-  omalexia-say [--lang en|nl|auto] [--wait] TEXT...   speak the given text
+  omalexia-say [--lang CODE|auto] [--wait] TEXT...   speak the given text
   omalexia-say [--lang ...] -                          speak stdin
   omalexia-say selection                               speak the highlighted text
   omalexia-say clipboard                               speak the clipboard

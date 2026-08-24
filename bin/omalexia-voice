@@ -3,13 +3,19 @@
 
 Usage:
   omalexia-voice list                       installed voices and the current choice
-  omalexia-voice catalog [en|nl]            voices available for download
+  omalexia-voice languages                  languages: enabled, and available for download
+  omalexia-voice add [LANG [VOICE]]         enable a language (downloads a good default voice)
+  omalexia-voice remove LANG                disable a language (keeps the files)
+  omalexia-voice catalog [LANG]             voices available for download
   omalexia-voice install NAME [NAME...]     download Piper voices (e.g. nl_NL-pim-medium)
   omalexia-voice install kokoro             install the optional Kokoro English engine
-  omalexia-voice set en|nl NAME             use NAME for that language (installs it if needed)
+  omalexia-voice set LANG NAME              use NAME for that language (installs it if needed)
   omalexia-voice engine en piper|kokoro     pick the English engine
-  omalexia-voice language auto|en|nl        default when the language cannot be detected
-  omalexia-voice test [en|nl]               say a test sentence
+  omalexia-voice language auto|LANG         default when the language cannot be detected
+  omalexia-voice test [LANG]                say a test sentence
+
+Reading works in any language with a Piper voice (about 35). `add de` is all
+it takes; the daemon detects the language of the text among the enabled ones.
 
 Voices live in ~/.local/share/omalexia/voices; settings in
 ~/.config/omalexia/config.toml. The daemon reloads automatically.
@@ -55,6 +61,47 @@ RECOMMENDED = {
         ("nl_BE-nathalie-medium", "Flemish, instant"),
         ("nl_BE-rdh-medium", "Flemish, instant"),
     ],
+}
+
+# Language names for the selector, and the voice `add` picks by default.
+# Anything else in the Piper catalog still works via `set LANG NAME`.
+LANG_NAMES = {
+    "ar": "العربية (Arabic)", "ca": "Català", "cs": "Čeština", "cy": "Cymraeg",
+    "da": "Dansk", "de": "Deutsch", "el": "Ελληνικά", "en": "English",
+    "es": "Español", "fa": "فارسی (Persian)", "fi": "Suomi", "fr": "Français",
+    "hi": "हिन्दी (Hindi)", "hu": "Magyar", "is": "Íslenska", "it": "Italiano",
+    "ka": "ქართული (Georgian)", "kk": "Қазақша", "lb": "Lëtzebuergesch",
+    "lv": "Latviešu", "ne": "नेपाली (Nepali)", "nl": "Nederlands",
+    "no": "Norsk", "pl": "Polski", "pt": "Português", "ro": "Română",
+    "ru": "Русский", "sk": "Slovenčina", "sl": "Slovenščina", "sr": "Српски",
+    "sv": "Svenska", "sw": "Kiswahili", "tr": "Türkçe", "uk": "Українська",
+    "vi": "Tiếng Việt", "zh": "中文 (Chinese)", "bg": "Български", "bn": "বাংলা (Bengali)",
+    "eu": "Euskara", "he": "עברית (Hebrew)", "hy": "Հայերեն (Armenian)",
+    "id": "Bahasa Indonesia", "ja": "日本語 (Japanese)", "ko": "한국어 (Korean)",
+    "ku": "Kurdî", "ml": "മലയാളം (Malayalam)", "mr": "मराठी (Marathi)",
+    "sq": "Shqip", "te": "తెలుగు (Telugu)", "ur": "اردو (Urdu)",
+}
+PREFERRED_VOICE = {
+    "en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium",
+    "de": "de_DE-thorsten-medium", "fr": "fr_FR-siwis-medium",
+    "es": "es_ES-davefx-medium", "it": "it_IT-paola-medium",
+    "sv": "sv_SE-nst-medium", "ru": "ru_RU-irina-medium",
+    "uk": "uk_UA-ukrainian_tts-medium", "pl": "pl_PL-darkman-medium",
+    "tr": "tr_TR-dfki-medium", "zh": "zh_CN-huayan-medium",
+}
+QUALITY_ORDER = {"medium": 0, "high": 1, "low": 2, "x_low": 3}
+
+TEST_SENTENCES = {
+    "en": "Hello, I am the Omalexia voice. Select some text and press F10 to hear it read aloud.",
+    "nl": "Hallo, ik ben de stem van Omalexia. Selecteer tekst en druk op F10 om het voor te lezen.",
+    "de": "Hallo, ich bin die Stimme von Omalexia. Markiere einen Text und drücke F10, um ihn vorlesen zu lassen.",
+    "fr": "Bonjour, je suis la voix d'Omalexia. Sélectionnez un texte et appuyez sur F10 pour l'écouter.",
+    "es": "Hola, soy la voz de Omalexia. Selecciona un texto y pulsa F10 para escucharlo.",
+    "it": "Ciao, sono la voce di Omalexia. Seleziona un testo e premi F10 per ascoltarlo.",
+    "pt": "Olá, sou a voz do Omalexia. Selecione um texto e pressione F10 para o ouvir.",
+    "sv": "Hej, jag är Omalexias röst. Markera en text och tryck på F10 för att höra den uppläst.",
+    "pl": "Cześć, jestem głosem Omalexii. Zaznacz tekst i naciśnij F10, aby go odsłuchać.",
+    "ru": "Привет, я голос Омалексии. Выделите текст и нажмите F10, чтобы прослушать его.",
 }
 
 DEFAULTS = {
@@ -161,12 +208,97 @@ def install_kokoro() -> bool:
     return True
 
 
-def catalog(lang: str | None):
+def fetch_catalog() -> dict | None:
     try:
         with urllib.request.urlopen(VOICES_INDEX, timeout=20) as resp:
-            data = json.load(resp)
+            return json.load(resp)
     except Exception as exc:  # noqa: BLE001
-        print(f"could not fetch catalog: {exc}", file=sys.stderr)
+        print(f"could not fetch the voice catalog: {exc}", file=sys.stderr)
+        return None
+
+
+def catalog_by_family(data: dict) -> dict[str, list[str]]:
+    families: dict[str, list[str]] = {}
+    for key, v in data.items():
+        code = v.get("language", {}).get("code", "")
+        fam = v.get("language", {}).get("family") or code.split("_")[0]
+        if fam:
+            families.setdefault(fam, []).append(key)
+    return families
+
+
+def default_voice_for(lang: str, data: dict) -> str | None:
+    if lang in PREFERRED_VOICE and PREFERRED_VOICE[lang] in data:
+        return PREFERRED_VOICE[lang]
+    names = catalog_by_family(data).get(lang, [])
+    if not names:
+        return None
+    return sorted(names, key=lambda n: (QUALITY_ORDER.get(n.rsplit("-", 1)[-1], 9), n))[0]
+
+
+def print_languages(cfg: dict, families: dict[str, list[str]] | None):
+    tts = cfg["tts"]
+    print("Enabled (the daemon detects among these):")
+    for lang, name in tts["voices"].items():
+        label = LANG_NAMES.get(lang, lang)
+        print(f"  {lang:4} {label:28} {name}")
+    if families is None:
+        return
+    print("Available (omalexia voice add LANG):")
+    for fam in sorted(families):
+        if fam in tts["voices"]:
+            continue
+        label = LANG_NAMES.get(fam, fam)
+        print(f"  {fam:4} {label:28} {len(families[fam])} voice(s)")
+
+
+def add_language(cfg: dict, lang: str | None, voice: str | None) -> int:
+    data = fetch_catalog()
+    if data is None:
+        return 1
+    families = catalog_by_family(data)
+    if not lang:
+        print_languages(cfg, families)
+        try:
+            lang = input("Language code to add (empty to cancel): ").strip()
+        except EOFError:
+            lang = ""
+        if not lang:
+            return 0
+    lang = lang.lower()
+    if lang not in families:
+        print(f"no Piper voices for '{lang}'; see: omalexia voice languages", file=sys.stderr)
+        return 1
+    name = voice or default_voice_for(lang, data)
+    if name is None or not install_piper([name]):
+        print(f"could not install a voice for {lang}", file=sys.stderr)
+        return 1
+    cfg["tts"]["voices"][lang] = name
+    save(cfg)
+    print(f"{LANG_NAMES.get(lang, lang)} enabled with {name}. Others: omalexia voice catalog {lang}")
+    return 0
+
+
+def remove_language(cfg: dict, lang: str) -> int:
+    tts = cfg["tts"]
+    if lang not in tts["voices"]:
+        print(f"{lang} is not enabled", file=sys.stderr)
+        return 1
+    if len(tts["voices"]) == 1:
+        print("refusing to remove the last language", file=sys.stderr)
+        return 1
+    del tts["voices"][lang]
+    tts["engines"].pop(lang, None)
+    if tts["default_language"] == lang:
+        tts["default_language"] = "auto"
+    save(cfg)
+    print(f"{lang} disabled (voice files kept in {VOICES_DIR})")
+    return 0
+
+
+def catalog(lang: str | None):
+    data = fetch_catalog()
+    if data is None:
         return 1
     for key, v in sorted(data.items()):
         code = v.get("language", {}).get("code", "")
@@ -202,6 +334,17 @@ def main(argv: list[str]) -> int:
         if (KOKORO_DIR / ".venv").exists():
             print("Kokoro: installed")
         return 0
+
+    if cmd == "languages":
+        print_languages(cfg, None if rest == ["--offline"] else (
+            catalog_by_family(d) if (d := fetch_catalog()) else None))
+        return 0
+
+    if cmd == "add":
+        return add_language(cfg, rest[0] if rest else None, rest[1] if len(rest) > 1 else None)
+
+    if cmd == "remove" and len(rest) == 1:
+        return remove_language(cfg, rest[0])
 
     if cmd == "catalog":
         return catalog(rest[0] if rest else None)
@@ -246,10 +389,10 @@ def main(argv: list[str]) -> int:
         return 0
 
     if cmd == "test":
-        lang = rest[0] if rest else "en"
-        text = {
-            "nl": "Hallo, ik ben de stem van Omalexia. Selecteer tekst en druk op F10 om het voor te lezen.",
-        }.get(lang, "Hello, I am the Omalexia voice. Select some text and press F10 to hear it read aloud.")
+        lang = rest[0] if rest else tts["default_language"]
+        if lang in ("auto", "", None):
+            lang = next(iter(tts["voices"]), "en")
+        text = TEST_SENTENCES.get(lang, TEST_SENTENCES["en"])
         return subprocess.run(["omalexia-say", "--lang", lang, text], check=False).returncode
 
     print(__doc__)

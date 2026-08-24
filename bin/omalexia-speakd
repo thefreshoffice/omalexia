@@ -7,7 +7,7 @@ and plays audio through PipeWire (pw-play). Nothing leaves the machine.
 
 Protocol: one JSON object per line on the socket, one JSON reply per line.
 
-  {"cmd": "speak", "text": "...", "lang": "auto|en|nl", "wait": false}
+  {"cmd": "speak", "text": "...", "lang": "auto or an ISO code with a configured voice", "wait": false}
   {"cmd": "stop"}
   {"cmd": "status"}
   {"cmd": "set", "speed": 1.2}
@@ -93,33 +93,130 @@ def load_config() -> dict:
 # Text preparation
 # --------------------------------------------------------------------------
 
-NL_WORDS = {
-    "de", "het", "een", "en", "van", "ik", "je", "niet", "dat", "die", "op", "te", "met", "voor",
-    "zijn", "er", "maar", "om", "ook", "als", "dan", "nog", "wel", "naar", "bij", "uit", "aan",
-    "hij", "zij", "wij", "jullie", "deze", "dit", "wat", "hoe", "kan", "kunnen", "worden", "wordt",
-    "heb", "hebben", "heeft", "gaan", "gaat", "moet", "moeten", "geen", "veel", "onze", "over",
-    "wordt", "werd", "zou", "hier", "daar", "alleen", "omdat", "toch", "graag", "dus", "even",
-}
-EN_WORDS = {
-    "the", "a", "an", "and", "of", "to", "in", "is", "it", "that", "for", "you", "with", "on",
-    "are", "this", "be", "as", "at", "or", "was", "have", "from", "not", "by", "but", "we", "can",
-    "your", "will", "if", "all", "they", "what", "which", "their", "has", "been", "would", "there",
-    "about", "when", "one", "more", "these", "into", "just", "also", "our", "should", "could",
+# Language detection: pick among the languages the user has voices for.
+# Stage one looks at the script (Cyrillic, Greek, Arabic, ...), which is
+# decisive. Stage two scores Latin-script candidates on high-frequency
+# function words plus characters that only some orthographies use.
+
+STOPWORDS: dict[str, set[str]] = {k: set(v.split()) for k, v in {
+    "en": "the and of to in is it that for you with on are this be as at or was have from not by but we can will all your what into",
+    "nl": "de het een en van ik je niet dat die er maar zijn ook voor naar wordt heeft mij hij wij jullie deze omdat wel dan nog aan bij",
+    "de": "der die das und ist nicht ein eine ich sie mit auf für von dem den als auch werden wurde über nach durch beim einem einen sind",
+    "fr": "le la les des une est et dans que qui pour pas sur avec vous nous ils elle été être cette aux mais donc leur ont",
+    "es": "el la los las una es y en que de por para con no se su al como más pero sus este esta son entre",
+    "it": "il lo gli le una è che di non per con del della sono anche più come questo questa nella dal degli alla",
+    "pt": "o os as um uma é e que não do da em para com por se mais foi são como este esta pelo uns",
+    "da": "og det er en at den til ikke med han hun af på var som her også hvad hvor kan skal jeg ind",
+    "no": "og det er en at den til ikke med han hun av på var som her også hva hvor kan skal jeg inn",
+    "sv": "och det är en att den till inte med han hon av på var som här också vad kan ska jag ett för",
+    "fi": "ja on ei se että hän oli mutta kun myös niin tämä ole sitä joka mitä kuin vain jos nyt sen olen",
+    "pl": "i w nie się na jest że to z do o jak ale po co dla przez był była jego tym może",
+    "cs": "a je se na to že v s nebo jako ale po pro od tak jsem byl bylo jsou už co když jeho",
+    "sk": "a je sa na to že v s alebo ako ale po pre od tak som bol bolo sú už čo keď jeho",
+    "ro": "și de la în cu nu pe un o este sunt care mai pentru dar din ce sa au fost când după",
+    "hu": "a az és nem hogy is egy van volt de ha már csak meg el ki mint még ezt aki mert",
+    "tr": "ve bir bu da de için ile ne var yok ama daha çok gibi ben sen biz siz onlar değil kadar",
+    "ca": "el la els les una és i que de no per amb del al més com aquest aquesta són també però hi",
+    "is": "og að er það ekki en við hann hún þau af á var sem hér einnig hvað hvar getur ég um",
+    "lv": "un ir nav ka tas šis ar no par uz bet kā tikai arī jau vēl kad viņš viņa mēs es",
+    "lb": "an dat ass net een eng vun mat fir op och nach wéi mee dass hien si mir dir ech",
+    "cy": "y yr a i o yn ac mae ar am gyda ddim wedi bod fel ond hyn nhw chi ni eu",
+    "sw": "na ya wa ni kwa la za katika hii yake wake kama lakini pia sana tu baada kabla watu wengi",
+    "vi": "và của là không có được cho một người này đã với các những khi tôi bạn chúng để về",
+}.items()}
+
+# Characters that strongly suggest one orthography over its neighbours.
+CHAR_MARKERS: dict[str, str] = {
+    "de": "ßäöü", "es": "ñ¿¡", "pt": "ãõç", "fr": "çàèêëœù", "it": "àèìòù",
+    "da": "øå", "no": "øå", "sv": "åäö", "fi": "äö",
+    "pl": "ąęłżźśćń", "cs": "řěů", "sk": "ľĺŕô", "hu": "őű",
+    "ro": "ășțţâî", "tr": "ğşıİ", "is": "þðæ", "lv": "āēīūķļņģš",
+    "ca": "çàèò·", "cy": "ŵŷ", "vi": "ạảấầẩậắằẳẵặẹẻẽếềểễệịọỏốồổỗộớờởỡợụủứừửữựỳỵỷỹđơư",
 }
 
+# Non-Latin scripts are decisive on their own.
+SCRIPT_RANGES = [
+    ((0x4E00, 0x9FFF), "zh"), ((0x3040, 0x30FF), "ja"), ((0xAC00, 0xD7AF), "ko"),
+    ((0x10A0, 0x10FF), "ka"), ((0x0370, 0x03FF), "el"),
+    ((0x0600, 0x06FF), "ar"), ((0x0400, 0x04FF), "ru"),
+    ((0x0900, 0x097F), "hi"), ((0x0590, 0x05FF), "he"),
+    ((0x0530, 0x058F), "hy"), ((0x0980, 0x09FF), "bn"),
+    ((0x0C00, 0x0C7F), "te"), ((0x0D00, 0x0D7F), "ml"),
+]
 
-def detect_language(text: str, fallback: str) -> str:
-    words = re.findall(r"[a-zA-Z']+", text.lower())
+
+def _script_language(text: str, candidates: list[str]) -> str | None:
+    counts: dict[str, int] = {}
+    for ch in text:
+        cp = ord(ch)
+        if cp < 0x0370:
+            continue
+        for (lo, hi), lang in SCRIPT_RANGES:
+            if lo <= cp <= hi:
+                counts[lang] = counts.get(lang, 0) + 1
+                break
+    if not counts:
+        return None
+    lang = max(counts, key=counts.get)
+    if counts[lang] < 3:
+        return None
+    # Han plus kana means Japanese, not Chinese.
+    if lang == "zh" and counts.get("ja") and "ja" in candidates:
+        lang = "ja"
+    # Cyrillic with Bulgarian in play and no Russian: prefer the candidate.
+    if lang == "ru" and "ru" not in candidates and "bg" in candidates:
+        lang = "bg"
+    # Refine within a shared script.
+    if lang == "ar":
+        if "fa" in candidates and ("ar" not in candidates or any(c in text for c in "پچژگ")):
+            lang = "fa"
+        elif "ur" in candidates and ("ar" not in candidates or any(c in text for c in "ٹڈڑںھے")):
+            lang = "ur"
+    if lang == "ru":
+        if "uk" in candidates and any(c in text for c in "іїєґ"):
+            lang = "uk"
+        elif "kk" in candidates and any(c in text for c in "әғқңөұүһ"):
+            lang = "kk"
+        elif "sr" in candidates and any(c in text for c in "ђћџљњ"):
+            lang = "sr"
+        elif "ru" not in candidates:
+            lang = next((c for c in ("uk", "sr", "kk") if c in candidates), lang)
+    if lang == "hi" and "hi" not in candidates and "ne" in candidates:
+        lang = "ne"
+    return lang if lang in candidates else None
+
+
+def detect_language(text: str, fallback: str, candidates: list[str]) -> str:
+    if not candidates:
+        return fallback
+    if fallback not in candidates:
+        fallback = candidates[0]
+    if len(candidates) == 1:
+        return candidates[0]
+    by_script = _script_language(text, candidates)
+    if by_script:
+        return by_script
+    lowered = text.lower()
+    words = re.findall(r"[^\W\d_]+", lowered, re.UNICODE)
     if not words:
         return fallback
-    nl = sum(1 for w in words if w in NL_WORDS)
-    en = sum(1 for w in words if w in EN_WORDS)
-    # "ij" is a strong Dutch marker, "th" a strong English one.
-    nl += sum(1 for w in words if "ij" in w) // 2
-    en += sum(1 for w in words if w.startswith("th")) // 2
-    if nl == en:
+    scores: dict[str, int] = {}
+    for lang in candidates:
+        score = sum(2 for w in words if w in STOPWORDS.get(lang, ()))
+        markers = CHAR_MARKERS.get(lang)
+        if markers:
+            score += min(sum(lowered.count(c) for c in markers), len(words) // 2)
+        # Legacy tie-breakers that work well for the common en/nl pair.
+        if lang == "nl":
+            score += sum(1 for w in words if "ij" in w) // 2
+        if lang == "en":
+            score += sum(1 for w in words if w.startswith("th")) // 2
+        scores[lang] = score
+    best = max(scores, key=scores.get)
+    ranked = sorted(scores.values(), reverse=True)
+    if ranked[0] == 0 or (len(ranked) > 1 and ranked[0] == ranked[1]):
         return fallback
-    return "nl" if nl > en else "en"
+    return best
 
 
 URL_RE = re.compile(r"https?://(?:www\.)?([^/\s]+)\S*")
@@ -309,8 +406,12 @@ class Daemon:
 
     # -- engines -----------------------------------------------------------
 
+    MAX_WARM_ENGINES = 3
+
     def engine_for(self, lang: str):
         if lang in self.engines:
+            # Move to the end: most recently used.
+            self.engines[lang] = self.engines.pop(lang)
             return self.engines[lang]
         tts = self.config["tts"]
         wanted = tts["engines"].get(lang, "piper")
@@ -326,10 +427,32 @@ class Daemon:
                 raise FileNotFoundError(f"no voice configured for language '{lang}'")
             engine = PiperEngine(voice)
         self.engines[lang] = engine
+        # With many languages configured, keep only the most recently used
+        # voices in memory; never evict the one that is speaking right now.
+        active = self.current.get("lang")
+        while len(self.engines) > self.MAX_WARM_ENGINES:
+            victim = next((k for k in self.engines if k not in (lang, active)), None)
+            if victim is None:
+                break
+            dropped = self.engines.pop(victim)
+            proc = getattr(dropped, "proc", None)
+            if proc is not None:
+                try:
+                    proc.terminate()
+                except Exception:  # noqa: BLE001
+                    pass
+            log(f"unloaded {victim} voice (keeping {self.MAX_WARM_ENGINES} warm)")
         return engine
 
     def preload(self):
-        for lang in self.config["tts"]["voices"]:
+        """Warm the most likely voices; the rest load on first use (~1 s)."""
+        tts = self.config["tts"]
+        langs = list(tts["voices"])
+        default = tts["default_language"]
+        if default in langs:
+            langs.remove(default)
+            langs.insert(0, default)
+        for lang in langs[: self.MAX_WARM_ENGINES]:
             try:
                 self.engine_for(lang)
             except Exception as exc:  # noqa: BLE001
@@ -376,7 +499,7 @@ class Daemon:
         tts = self.config["tts"]
         if lang in ("", "auto", None):
             fallback = tts["default_language"] if tts["default_language"] != "auto" else "en"
-            lang = detect_language(text, fallback)
+            lang = detect_language(text, fallback, list(tts["voices"]))
         if lang not in tts["voices"]:
             lang = next(iter(tts["voices"]))
         try:

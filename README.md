@@ -69,6 +69,17 @@ reference laptop (Arrow Lake, no NVIDIA) they start in 0.08–0.13 s, while
 `omalexia voice set en en_GB-alan-medium` swaps a voice (downloads it if
 needed); the menu lists the good ones.
 
+**Any language, not just these two.** The Piper catalog covers about 45
+languages and `omalexia voice add de` (or `fr`, `uk`, `ar`, `zh`, ...) is all
+it takes: a good default voice is downloaded on the spot and the language
+joins the detector, so a German paragraph is simply read in German.
+`omalexia voice languages` lists what is enabled and what is available,
+`remove` disables one again, and the bar panel's language selector follows
+whatever is enabled. Detection first looks at the script (Cyrillic, Greek,
+Arabic, CJK, ...), then scores Latin-script candidates on function words and
+characters like ß, ñ or ő. Only the three most recently used voices are kept
+loaded, so enabling ten languages costs disk, not memory.
+
 Optional: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is the
 best-sounding local English voice that still runs on a CPU (~0.8 s to first
 word here, no Dutch). `omalexia voice engine en kokoro` installs it into its

@@ -288,6 +288,37 @@ def split_sentences(text: str) -> list[str]:
     return merged or [text]
 
 
+# Speeds above ENGINE_SPEED_MAX are produced by synthesizing at 2x and
+# time-stretching the audio with ffmpeg's atempo filter (pitch-preserving;
+# a single node handles factors up to 2, so 2 x 2 covers the whole range).
+# Model-side speed alone cannot do this: kokoro-onnx refuses anything above
+# 2.0 and Piper's duration predictor saturates near 2.2x regardless of the
+# requested length_scale.
+SPEED_MAX = 4.0
+ENGINE_SPEED_MAX = 2.0
+_atempo_warned = False
+
+
+def atempo(pcm: bytes, rate: int, factor: float) -> bytes:
+    """Time-stretch mono s16 PCM by factor (>1 = faster) without pitch shift."""
+    global _atempo_warned
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-v", "error", "-f", "s16le", "-ar", str(rate), "-ac", "1",
+             "-i", "pipe:0", "-filter:a", f"atempo={factor:.4f}",
+             "-f", "s16le", "-ar", str(rate), "-ac", "1", "pipe:1"],
+            input=pcm, capture_output=True, timeout=30,
+        )
+        if result.returncode == 0 and result.stdout:
+            return result.stdout
+    except Exception:  # noqa: BLE001
+        pass
+    if not _atempo_warned:
+        _atempo_warned = True
+        log("ffmpeg atempo unavailable; speeds above 2x fall back to 2x")
+    return pcm
+
+
 # --------------------------------------------------------------------------
 # Engines
 # --------------------------------------------------------------------------
@@ -580,7 +611,7 @@ class Daemon:
             # No explicit speed: follow the live setting, re-read between
             # sentences so `set` changes apply mid-text.
             if speed is not None:
-                speed = max(0.5, min(2.5, float(speed)))
+                speed = max(0.5, min(SPEED_MAX, float(speed)))
             thread = threading.Thread(
                 target=self._run, args=(engine, text, speed, cancel, uid), daemon=True
             )
@@ -633,7 +664,11 @@ class Daemon:
                         cancel.set()
                         break
                 last_speed = now
-                for pcm in engine.synthesize(sentence, now, cancel):
+                engine_speed = min(now, ENGINE_SPEED_MAX)
+                stretch = now / engine_speed
+                for pcm in engine.synthesize(sentence, engine_speed, cancel):
+                    if stretch > 1.01:
+                        pcm = atempo(pcm, engine.rate, stretch)
                     if not write_paced(pcm):
                         cancel.set()
                         break
@@ -714,7 +749,7 @@ class Daemon:
                 self.send(conn, {"ok": True, **self.status()})
             elif cmd == "set":
                 if "speed" in req:
-                    speed = max(0.5, min(2.5, float(req["speed"])))
+                    speed = max(0.5, min(SPEED_MAX, float(req["speed"])))
                     self.config["tts"]["speed"] = speed
                     STATE_HOME.mkdir(parents=True, exist_ok=True)
                     (STATE_HOME / "speed").write_text(f"{speed:.2f}\n")

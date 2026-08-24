@@ -104,7 +104,7 @@ Panel {
     if (dx === 0) return
     var key = cursorKey
     if (key === "read.speed") {
-      var next = Math.max(0.5, Math.min(2.0, Number(read.speed || 1) + dx * 0.1))
+      var next = Math.max(0.5, Math.min(4.0, Number(read.speed || 1) + dx * 0.1))
       omalexia.set("speed", next.toFixed(1))
     } else if (key === "read.voiceEn") {
       omalexia.set("voiceEn", cycleOption(read.voicesEn, read.voiceEn, dx))
@@ -298,7 +298,7 @@ Panel {
         if (t === "r" || t === "R") omalexia.readSelection()
         else if (t === "s" || t === "S") omalexia.stopReading()
         else if (t === "d" || t === "D") omalexia.toggleDictation()
-        else if (t === "+" || t === "=") omalexia.set("speed", Math.min(2.0, Number(root.read.speed || 1) + 0.1).toFixed(1))
+        else if (t === "+" || t === "=") omalexia.set("speed", Math.min(4.0, Number(root.read.speed || 1) + 0.1).toFixed(1))
         else if (t === "-") omalexia.set("speed", Math.max(0.5, Number(root.read.speed || 1) - 0.1).toFixed(1))
       }
 
@@ -418,7 +418,7 @@ Panel {
               valueText: Number(root.read.speed || 1).toFixed(1) + "×"
               value: Number(root.read.speed || 1)
               minimum: 0.5
-              maximum: 2.0
+              maximum: 4.0
               step: 0.1
               onCommitted: function(v) { omalexia.set("speed", v.toFixed(1)) }
             }

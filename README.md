@@ -51,6 +51,9 @@ e-mail and an English doc both just work. It streams sentence by sentence
 through PipeWire and stops the instant you ask. The speed setting is read
 between sentences, so nudging it in the bar panel changes the pace of the
 text you are listening to within a few seconds, not just the next one. The
+range is 0.5x to 4x: up to 2x the engine itself speaks faster, and beyond
+that the audio is time-stretched with ffmpeg's pitch-preserving atempo
+filter, so 4x stays intelligible instead of becoming a chipmunk. The
 daemon keeps about four seconds of audio buffered ahead of playback, so the
 next sentence is synthesized while the current one plays and sentence
 boundaries stay seamless.
@@ -220,6 +223,9 @@ Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`
   falls back to `Ctrl+C` there.
 - There is no per-word highlighting while reading; that needs app support.
 - Kokoro and Piper "high" voices are not instant on CPU; the defaults are.
+- At 4x a Piper "high" voice synthesizes at roughly the pace it plays, so a
+  long 4x session with one can occasionally pause to catch up; "medium"
+  voices and Kokoro keep up comfortably.
 
 ## Contributing
 

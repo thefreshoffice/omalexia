@@ -4,6 +4,31 @@ What is next for Omalexia, and why. The rule from the README applies here too:
 bring measurements, not opinions. Every item below says what to measure and
 what would count as an answer.
 
+[docs/speech-investigation.md](docs/speech-investigation.md) has the first set
+of measurements, taken on 2026-08-24. It found that Piper `high` voices are
+being rejected for the wrong reason and that the NPU is worth using for
+dictation but not for speech. Items below marked **measured** come from there.
+
+## 0. Fix the first sentence (measured, do this first)
+
+Piper emits one chunk per sentence, so the wait before the first word is the
+cost of synthesising the whole first sentence. After that, synthesis runs far
+ahead of playback: a `high` voice has a real-time factor of about 0.54 and
+gains half a second of slack per sentence spoken, so it never stutters on a
+long document. The only penalty for a much better voice is about 0.7 s once,
+at the start.
+
+- [ ] Split the opening sentence at its first comma so the worst case stops
+      being a 24-word sentence, or speak sentence one with the `medium` voice
+      and switch to `high` from sentence two. Both voices are already in the
+      daemon's engine cache.
+- [ ] In reading mode the text is known before the key is pressed. Start
+      synthesising on selection instead of on keypress.
+- [ ] Re-evaluate the defaults afterwards. `high` and Kokoro were both ruled
+      out on a latency cost that only applies to sentence one.
+- [ ] Update the README, which currently presents the per-sentence cost of
+      `high` voices as disqualifying.
+
 ## 1. Bench multiple text-to-speech providers
 
 Omalexia ships Piper as the default and Kokoro as an option, chosen on one
@@ -37,6 +62,14 @@ architecture.
 - [ ] Re-run the current defaults so the README numbers have a reproducible
       source: `en_US-lessac-medium`, `nl_NL-pim-medium`, the matching `high`
       voices, and Kokoro-82M.
+- [ ] Compare the three installed Dutch voices (`nl_NL-pim-medium`,
+      `nl_NL-mls-medium`, `nl_BE-nathalie-medium`) with listeners rather than
+      timings. Nobody has actually done this and Dutch quality is the weakest
+      link. **measured:** all three are within 0.35 to 0.72 s to first audio,
+      so latency does not decide this.
+- [ ] Improve text normalisation ahead of the engine: abbreviations, numbers,
+      dates, currency, Dutch compounds. This is where synthetic speech most
+      often sounds wrong and it is fixable with rules, not with a bigger model.
 - [ ] Re-test Supertonic 3. It was rejected at roughly 5 s per sentence on
       CPU. Worth one more run if a faster CPU path appears.
 - [ ] Evaluate `espeak-ng` as a deliberate last-resort engine. It sounds
@@ -112,7 +145,39 @@ against a real understanding of the program.
       installer is supposed to leave Whisper in place. Test it by making the
       download fail on purpose.
 
-## 3. Smaller things
+## 3. Use the NPU where it actually pays (measured)
+
+The reference laptop has a working NPU: PCI `8086:7D1D`, `intel_vpu` loaded,
+`/dev/accel/accel0` world readable and writable, so no udev rule or group
+membership is needed. The whole userspace stack is in Arch `extra`
+(`intel-npu-driver`, `intel-npu-compiler`, `level-zero-loader`, `openvino`,
+`openvino-intel-npu-plugin`, `python-openvino`), roughly 400 MB, none of it
+installed yet.
+
+Dictation is the case worth pursuing. An OpenVINO build of the same Parakeet
+model Omalexia already uses reports 25.7x real time on the NPU against 5 to 8x
+on CPU at identical word error rate, on a chip with the same NPU device ID.
+Fixed 10 s chunks give the static shapes an NPU wants.
+
+Text to speech is the case worth dropping. Variable-length text into
+variable-length audio is the shape an NPU handles worst, no Piper OpenVINO path
+exists, and the one Kokoro project that accepts an `"NPU"` device string has no
+tests or benchmarks behind it. More to the point, `medium` voices already run
+at a real-time factor of 0.05, so speed is not the problem quality has.
+
+- [ ] Timebox a spike: install the six packages behind an explicit opt-in,
+      confirm OpenVINO enumerates `NPU`, run the Parakeet OpenVINO build.
+- [ ] Confirm from `dmesg | grep ivpu` which firmware blob loads, to settle
+      whether this is the ~13 TOPS NPU 3720 generation as the device ID implies.
+- [ ] Answer the Voxtype pluggability question first. The OpenVINO build is a
+      four-model pipeline with its own chunking and state handling, not a
+      drop-in for the ONNX file Voxtype loads.
+- [ ] Keep it optional. It is a large download for a battery and headroom win,
+      not a responsiveness one.
+- [ ] Do not put TTS on the NPU until a heavier Dutch-capable voice exists that
+      would justify the freed headroom.
+
+## 4. Smaller things
 
 - [ ] Per-word highlighting while reading. Needs application support, so start
       by finding out which applications offer any.

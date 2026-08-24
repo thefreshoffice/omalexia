@@ -48,7 +48,9 @@ A small daemon keeps two [Piper](https://github.com/OHF-Voice/piper1-gpl)
 neural voices loaded (English and Dutch), so speech starts about 0.1 s
 after the key press. The language is detected from the text, so a Dutch
 e-mail and an English doc both just work. It streams sentence by sentence
-through PipeWire and stops the instant you ask.
+through PipeWire and stops the instant you ask. The speed setting is read
+between sentences, so nudging it in the bar panel changes the pace of the
+text you are listening to, not just the next one.
 
 Before speaking it unwraps hard line breaks (e-mails, terminals), drops
 markdown symbols, bullets and `#` headings, and reads URLs as their host
@@ -83,7 +85,11 @@ loaded, so enabling ten languages costs disk, not memory.
 Optional: [Kokoro-82M](https://huggingface.co/hexgrad/Kokoro-82M) is the
 best-sounding local English voice that still runs on a CPU (~0.8 s to first
 word here, no Dutch). `omalexia voice engine en kokoro` installs it into its
-own venv (~350 MB) and switches English to it; Dutch stays on Piper.
+own venv (~350 MB) and switches English to it; Dutch stays on Piper. Once
+enabled it is loaded at daemon start and kept loaded: settings changes reload
+only the voices they touch, and when the recently-used cap evicts a voice it
+picks a Piper one first, so Kokoro answers at synthesis speed (about 0.7 s
+for the first sentence), not model-load speed.
 
 Everything is local. Nothing is sent anywhere.
 

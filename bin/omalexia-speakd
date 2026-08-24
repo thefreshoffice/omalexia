@@ -249,6 +249,44 @@ def prepare_text(text: str) -> str:
     return text
 
 
+SENTENCE_RE = re.compile(r"(?<=[.!?…])\s+")
+ABBREVIATIONS = {
+    "mr", "mrs", "ms", "dr", "prof", "st", "vs", "etc", "nr", "no", "ca", "approx",
+    "dhr", "mevr", "mw", "bv", "o.a", "d.w.z", "e.g", "i.e", "z.b", "bzw", "u.a",
+}
+
+
+def split_sentences(text: str) -> list[str]:
+    """Split prepared text into sentences so the daemon can re-read the speed
+    between them. Boundaries the engines would find themselves; a wrong split
+    only shortens one synthesis call."""
+    parts: list[str] = []
+    start = 0
+    for m in SENTENCE_RE.finditer(text):
+        before = text[start:m.start()].rstrip()
+        word = before.rsplit(None, 1)[-1] if before else ""
+        bare = word.rstrip(".!?…").lower()
+        nxt = text[m.end(): m.end() + 1]
+        # Not a boundary: known abbreviation, an initial ("J."), or the next
+        # word continues in lowercase.
+        if bare in ABBREVIATIONS or (len(bare) == 1 and bare.isalpha()) or (nxt and nxt.islower()):
+            continue
+        if before:
+            parts.append(text[start:m.start()].strip())
+        start = m.end()
+    tail = text[start:].strip()
+    if tail:
+        parts.append(tail)
+    # Glue fragments that are too short to synthesize on their own.
+    merged: list[str] = []
+    for part in parts:
+        if merged and len(part) < 4:
+            merged[-1] += " " + part
+        else:
+            merged.append(part)
+    return merged or [text]
+
+
 # --------------------------------------------------------------------------
 # Engines
 # --------------------------------------------------------------------------
@@ -431,7 +469,12 @@ class Daemon:
         # voices in memory; never evict the one that is speaking right now.
         active = self.current.get("lang")
         while len(self.engines) > self.MAX_WARM_ENGINES:
-            victim = next((k for k in self.engines if k not in (lang, active)), None)
+            victims = [k for k in self.engines if k not in (lang, active)]
+            # A voice with a worker process (Kokoro) is expensive to bring
+            # back; evict the in-process Piper voices first.
+            victim = next((k for k in victims
+                           if getattr(self.engines[k], "proc", None) is None),
+                          victims[0] if victims else None)
             if victim is None:
                 break
             dropped = self.engines.pop(victim)
@@ -461,13 +504,25 @@ class Daemon:
     def reload(self):
         self.stop()
         with self.lock:
+            old_tts = self.config["tts"]
             self.config = load_config()
-            old = self.engines
-            self.engines = {}
-            for e in old.values():
-                proc = getattr(e, "proc", None)
+            tts = self.config["tts"]
+            kept: dict[str, object] = {}
+            for lang, engine in self.engines.items():
+                unchanged = (
+                    lang in tts["voices"]
+                    and tts["voices"].get(lang) == old_tts["voices"].get(lang)
+                    and tts["engines"].get(lang, "piper") == old_tts["engines"].get(lang, "piper")
+                    and (tts["engines"].get(lang) != "kokoro" or tts["kokoro"] == old_tts["kokoro"])
+                )
+                if unchanged:
+                    kept[lang] = engine
+                    continue
+                proc = getattr(engine, "proc", None)
                 if proc is not None:
                     proc.kill()
+                log(f"reload: dropping {lang} voice (configuration changed)")
+            self.engines = kept
         self.preload()
 
     # -- speaking ----------------------------------------------------------
@@ -513,7 +568,10 @@ class Daemon:
             uid = self.utterance_id
             cancel = self.cancel
             self.current = {"text": text, "lang": lang, "id": uid}
-            speed = float(tts["speed"]) if speed is None else max(0.5, min(2.5, float(speed)))
+            # No explicit speed: follow the live setting, re-read between
+            # sentences so `set` changes apply mid-text.
+            if speed is not None:
+                speed = max(0.5, min(2.5, float(speed)))
             thread = threading.Thread(
                 target=self._run, args=(engine, text, speed, cancel, uid), daemon=True
             )
@@ -524,7 +582,7 @@ class Daemon:
             old.join(timeout=2)
         return {"ok": True, "id": uid, "lang": lang, "engine": engine.name, "chars": len(text)}
 
-    def _run(self, engine, text: str, speed: float, cancel: threading.Event, uid: int):
+    def _run(self, engine, text: str, speed: float | None, cancel: threading.Event, uid: int):
         player = None
         try:
             player = Player(engine.rate)
@@ -533,9 +591,18 @@ class Daemon:
                     player.kill()
                     return
                 self.player = player
-            for pcm in engine.synthesize(text, speed, cancel):
-                if cancel.is_set() or not player.write(pcm):
+            last_speed = None
+            for sentence in split_sentences(text):
+                if cancel.is_set():
                     break
+                now = speed if speed is not None else float(self.config["tts"]["speed"])
+                if last_speed is not None and now != last_speed:
+                    log(f"speed {last_speed} -> {now} mid-utterance")
+                last_speed = now
+                for pcm in engine.synthesize(sentence, now, cancel):
+                    if cancel.is_set() or not player.write(pcm):
+                        cancel.set()
+                        break
             if not cancel.is_set():
                 player.finish()
         except Exception as exc:  # noqa: BLE001

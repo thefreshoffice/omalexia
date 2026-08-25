@@ -1,0 +1,196 @@
+#!/usr/bin/python3
+"""omalexia-locate: find the words of the current utterance on screen.
+
+Reads the utterance the daemon just started ($XDG_RUNTIME_DIR/omalexia/
+utterance: id, language, prepared text), screenshots the focused window,
+OCRs it with word boxes (tesseract tsv) and aligns the OCR words with the
+spoken words. Prints one JSON object:
+
+  {"ok": true, "id": N, "matched": n, "total": m,
+   "boxes": [{"start": .., "end": .., "x": .., "y": .., "w": .., "h": ..}]}
+
+"start"/"end" are the same global char offsets the daemon's word events
+carry, so an overlay can look a box up straight from an event. Coordinates
+are Hyprland layout (logical) pixels. ok:false means the text could not be
+found on screen (not visible, other window focused, OCR mismatch); the
+caller then simply highlights nothing.
+
+Works for any app because it never asks the app anything: whatever is
+readable on screen is locatable. The price: boxes are a snapshot, so
+scrolling mid-read leaves them behind (reading mode pins the window, which
+is the intended pairing).
+
+Testing hooks: --image FILE --origin X,Y --scale S skip hyprctl and grim
+and treat FILE as a screenshot of a region at layout position X,Y taken at
+scale S.
+"""
+
+from __future__ import annotations
+
+import difflib
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unicodedata
+from pathlib import Path
+
+RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "omalexia"
+
+# tesseract traineddata names for the daemon's language codes; anything not
+# installed (or not listed) falls back to English, which still finds most
+# Latin-script words.
+TESS_LANGS = {
+    "en": "eng", "nl": "nld", "de": "deu", "fr": "fra", "es": "spa",
+    "it": "ita", "pt": "por", "da": "dan", "sv": "swe", "no": "nor",
+    "fi": "fin", "pl": "pol", "cs": "ces", "ro": "ron", "hu": "hun",
+    "tr": "tur", "ru": "rus", "uk": "ukr", "el": "ell",
+}
+
+
+def fail(reason: str) -> int:
+    print(json.dumps({"ok": False, "error": reason}))
+    return 0
+
+
+def norm(word: str) -> str:
+    """Fold a word for matching: NFKC (ligatures), lowercase, alnum only."""
+    return re.sub(r"[\W_]+", "", unicodedata.normalize("NFKC", word).lower(), flags=re.UNICODE)
+
+
+def run(cmd, timeout=15, **kw):
+    return subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, **kw)
+
+
+def focused_window() -> tuple[float, float, float, float, float] | None:
+    """Layout x, y, w, h of the focused window plus its monitor's scale."""
+    try:
+        win = json.loads(run(["hyprctl", "activewindow", "-j"], timeout=5).stdout or "{}")
+        monitors = json.loads(run(["hyprctl", "monitors", "-j"], timeout=5).stdout or "[]")
+    except ValueError:
+        return None
+    if not win.get("address"):
+        return None
+    x, y = win.get("at", [0, 0])
+    w, h = win.get("size", [0, 0])
+    if w <= 0 or h <= 0:
+        return None
+    scale = 1.0
+    for mon in monitors:
+        if mon.get("id") == win.get("monitor"):
+            scale = float(mon.get("scale") or 1.0)
+    return float(x), float(y), float(w), float(h), scale
+
+
+def ocr_words(image: Path, lang: str) -> list[tuple[str, float, float, float, float]]:
+    """(normalized word, x, y, w, h) per OCR word, in image pixels."""
+    tess_lang = TESS_LANGS.get(lang, "eng")
+    langs = run(["tesseract", "--list-langs"], timeout=10).stdout.decode("utf-8", "replace")
+    if tess_lang not in langs.split():
+        tess_lang = "eng"
+    # Dark themes have light text on dark ground; tesseract reads a negated
+    # grayscale of those far better. Decide on the mean luminance.
+    gray = image.with_suffix(".gray.png")
+    mean = run(["magick", str(image), "-colorspace", "gray", "-format", "%[fx:mean]", "info:"],
+               timeout=20).stdout.decode().strip()
+    negate = ["-negate"] if mean and float(mean) < 0.5 else []
+    run(["magick", str(image), "-colorspace", "gray", *negate, str(gray)], timeout=20)
+    src = gray if gray.exists() else image
+    r = run(["tesseract", str(src), "-", "-l", tess_lang, "tsv"], timeout=60)
+    gray.unlink(missing_ok=True)
+    if r.returncode != 0:
+        return []
+    words = []
+    for line in r.stdout.decode("utf-8", "replace").splitlines()[1:]:
+        cols = line.split("\t")
+        if len(cols) < 12 or cols[0] != "5":
+            continue
+        try:
+            left, top, width, height = (float(c) for c in cols[6:10])
+            conf = float(cols[10])
+        except ValueError:
+            continue
+        text = norm(cols[11])
+        if conf >= 30 and text:
+            words.append((text, left, top, width, height))
+    return words
+
+
+def main() -> int:
+    args = sys.argv[1:]
+    image = origin = None
+    scale = 1.0
+    while args:
+        arg = args.pop(0)
+        if arg == "--image" and args:
+            image = Path(args.pop(0))
+        elif arg == "--origin" and args:
+            origin = tuple(float(v) for v in args.pop(0).split(","))
+        elif arg == "--scale" and args:
+            scale = float(args.pop(0))
+        elif arg in ("-h", "--help"):
+            print(__doc__)
+            return 0
+
+    try:
+        utterance = json.loads((RUNTIME / "utterance").read_text())
+    except (OSError, ValueError):
+        return fail("no current utterance")
+    text = str(utterance.get("text") or "")
+    lang = str(utterance.get("lang") or "en")
+    if not text:
+        return fail("empty utterance")
+
+    if image is None:
+        window = focused_window()
+        if window is None:
+            return fail("no focused window")
+        x, y, w, h, scale = window
+        origin = (x, y)
+        shot = Path(tempfile.mkstemp(suffix=".png", dir=RUNTIME if RUNTIME.exists() else None)[1])
+        try:
+            r = run(["grim", "-g", f"{x:.0f},{y:.0f} {w:.0f}x{h:.0f}", str(shot)], timeout=15)
+            if r.returncode != 0:
+                return fail("screenshot failed")
+            ocr = ocr_words(shot, lang)
+        finally:
+            shot.unlink(missing_ok=True)
+    else:
+        origin = origin or (0.0, 0.0)
+        ocr = ocr_words(image, lang)
+    if not ocr:
+        return fail("no readable text on screen")
+
+    spoken = [(m.start(), m.end(), norm(m.group()))
+              for m in re.finditer(r"\S+", text)]
+    spoken = [t for t in spoken if t[2]]
+    if not spoken:
+        return fail("nothing to match")
+
+    matcher = difflib.SequenceMatcher(
+        a=[t[2] for t in spoken], b=[t[0] for t in ocr], autojunk=False)
+    boxes = []
+    for a, b, size in matcher.get_matching_blocks():
+        for k in range(size):
+            start, end, _ = spoken[a + k]
+            _, left, top, width, height = ocr[b + k]
+            boxes.append({
+                "start": start, "end": end,
+                "x": round(origin[0] + left / scale, 1),
+                "y": round(origin[1] + top / scale, 1),
+                "w": round(width / scale, 1),
+                "h": round(height / scale, 1),
+            })
+    # A partial match is fine (a long article is only partly on screen); a
+    # tiny one means the focused window shows different text.
+    if len(boxes) < 8 and len(boxes) / len(spoken) < 0.5:
+        return fail(f"text not on screen ({len(boxes)}/{len(spoken)} words matched)")
+    print(json.dumps({"ok": True, "id": utterance.get("id"),
+                      "matched": len(boxes), "total": len(spoken), "boxes": boxes}))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

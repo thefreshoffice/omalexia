@@ -178,6 +178,13 @@ def voice_options(lang: str, current: str, have: list[str]) -> list[dict]:
     return options
 
 
+def highlight_mode() -> str:
+    """"text" marks the spoken word where it stands on screen, "bar" shows
+    the sentence in a card at the bottom, "off" disables both."""
+    mode = read_text(OMALEXIA_STATE / "highlight")
+    return mode if mode in ("text", "bar", "off") else "text"
+
+
 def read_aloud_status() -> dict:
     cfg = omalexia_config()
     live = speakd_request({"cmd": "status"})
@@ -207,6 +214,7 @@ def read_aloud_status() -> dict:
             for code, voice in cfg["voices"].items()
         ],
         "kokoroInstalled": kokoro,
+        "highlightMode": highlight_mode(),
         "piperAvailable": (piper_probe := run(["/usr/bin/python3", "-c", "import piper"], timeout=8)) is not None
         and piper_probe.returncode == 0,
     }
@@ -365,6 +373,13 @@ def set_value(key: str, value: str) -> None:
     elif key == "daemon":
         action = "start" if value == "true" else "stop"
         run(["systemctl", "--user", action, "omalexia-speakd.service"], timeout=15)
+    elif key == "highlight":
+        # The plugin holds the daemon's watch connection only while a
+        # highlight mode is on, so "off" also stops the timing work.
+        if value not in ("text", "bar", "off"):
+            raise SystemExit(f"unknown highlight mode: {value}")
+        OMALEXIA_STATE.mkdir(parents=True, exist_ok=True)
+        (OMALEXIA_STATE / "highlight").write_text(value + "\n")
     elif key == "dictationEngine":
         run(["voxtype", "config", "set", "engine", value], timeout=10)
         run(["systemctl", "--user", "restart", "voxtype.service"], timeout=15)

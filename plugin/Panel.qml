@@ -49,7 +49,7 @@ Panel {
     keys.push("read.actions", "read.speed")
     var voiceLangs = read.languages || []
     for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
-    keys.push("read.language", "read.test")
+    keys.push("read.language", "read.highlight", "read.test")
     if (showDictation) {
       if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback", "dict.showTyped")
       else keys.push("dict.install")
@@ -115,6 +115,8 @@ Panel {
       if (voiceEntry) chooseVoice(voiceCode, cycleOption(voiceOptionsFor(voiceEntry), voiceValueFor(voiceEntry), dx))
     } else if (key === "read.language") {
       omalexia.set("language", cycleOption(languageOptions, read.language, dx))
+    } else if (key === "read.highlight") {
+      omalexia.set("highlight", cycleOption(highlightOptions, read.highlightMode || "text", dx))
     } else if (key === "dict.engine") {
       omalexia.set("dictationEngine", cycleOption(engineOptions, dictation.engine, dx))
     } else if (key === "look.font") {
@@ -148,6 +150,7 @@ Panel {
       else omalexia.act("add-language")
       break
     case "read.language": languageDropdown.toggle(); break
+    case "read.highlight": highlightDropdown.toggle(); break
     case "dict.actions":
       if (actionIndex === 0) omalexia.toggleDictation()
       else if (actionIndex === 1) omalexia.cancelDictation()
@@ -209,6 +212,11 @@ Panel {
       { value: "nl", label: "Nederlands" }
     ]
   }
+  readonly property var highlightOptions: [
+    { value: "text", label: "In the text being read" },
+    { value: "bar", label: "Subtitle bar at the bottom" },
+    { value: "off", label: "Off" }
+  ]
   readonly property var sizeOptions: [
     { value: "12", label: "Normal (12)" },
     { value: "14", label: "Comfortable (14)" },
@@ -283,6 +291,12 @@ Panel {
     settings: root.settings
   }
 
+  Highlight {
+    service: omalexia
+    bar: root.bar
+    screen: root.hostWidget && root.hostWidget.barWindow ? root.hostWidget.barWindow.screen : null
+  }
+
   IpcHandler {
     target: root.ipcTarget
     function open(): void { root.open() }
@@ -295,6 +309,7 @@ Panel {
     function stop(): string { omalexia.stopReading(); return "ok" }
     function dictate(): string { omalexia.toggleDictation(); return "ok" }
     function status(): string { return omalexia.statusText }
+    function debug(): string { return JSON.stringify(omalexia.highlightDebug()) }
   }
 
   KeyboardPanel {
@@ -472,6 +487,15 @@ Panel {
               options: root.languageOptions
               current: String(root.read.language || "auto")
               onChosen: function(v) { omalexia.set("language", v) }
+            }
+
+            DropdownRow {
+              id: highlightDropdown
+              rowKey: "read.highlight"
+              label: "Highlight words"
+              options: root.highlightOptions
+              current: String(root.read.highlightMode || "text")
+              onChosen: function(v) { omalexia.set("highlight", v) }
             }
 
             ActionRow {

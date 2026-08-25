@@ -10,6 +10,10 @@ BarWidget {
   id: root
   moduleName: "thefreshoffice.omalexia"
 
+  // The bar window this widget instance lives in; one exists per monitor,
+  // and the read-along overlay pins itself to the same screen.
+  readonly property var barWindow: QsWindow.window
+
   readonly property var service: panelLoader.item ? panelLoader.item.service : null
   readonly property bool speaking: service ? service.speaking : false
   readonly property bool recording: service ? service.recording : false

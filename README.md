@@ -100,6 +100,20 @@ only the voices they touch, and when the recently-used cap evicts a voice it
 picks a Piper one first, so Kokoro answers at synthesis speed (about 0.7 s
 for the first sentence), not model-load speed.
 
+**Read-along highlighting.** While text is read aloud, the word being
+spoken is marked right in the text on screen: the daemon knows the exact
+duration of every sentence before playing it, divides it over the words by
+phoneme count (espeak-ng), and streams word events on the playback clock;
+`omalexia-locate` OCRs the focused window once per reading (tesseract with
+word boxes) and matches the spoken words to their on-screen positions, so a
+translucent marker glides across the actual words. That works in any app,
+browser, PDF viewer or terminal, because no app cooperation is needed; when
+the text is not visible (reading the clipboard from elsewhere), nothing is
+drawn rather than something wrong. The panel's "Highlight words" setting
+switches between marking the text, a subtitle bar at the bottom of the
+screen showing the sentence with the spoken word in a pill, or off. Pairs
+best with reading mode, which keeps the window still.
+
 Everything is local. Nothing is sent anywhere.
 
 ### Talk: Voxtype, tuned
@@ -224,7 +238,9 @@ Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`
   (font, spacing, colours) is the better tool for long web articles.
 - Hyprland does not share the primary selection with XWayland apps; F10
   falls back to `Ctrl+C` there.
-- There is no per-word highlighting while reading; that needs app support.
+- Read-along highlighting locates the words by OCR when reading starts, so
+  scrolling or moving the window mid-read leaves the marker behind until the
+  next reading. The subtitle bar mode does not have this limit.
 - Kokoro and Piper "high" voices are not instant on CPU; the defaults are.
 - At 4x a Piper "high" voice synthesizes at roughly the pace it plays, so a
   long 4x session with one can occasionally pause to catch up; "medium"

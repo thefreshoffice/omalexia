@@ -226,8 +226,28 @@ at a real-time factor of 0.05, so speed is not the problem quality has.
 
 ## 4. Smaller things
 
-- [ ] Per-word highlighting while reading. Needs application support, so start
-      by finding out which applications offer any.
+- [x] Per-word highlighting while reading (shipped 2026-08-26). It needed no
+      application support after all: the daemon times every word from the
+      audio it is about to play (phoneme-weighted, exact at each sentence
+      boundary) and streams events over a `watch` socket; `omalexia-locate`
+      OCRs the focused window once per reading and maps the words to their
+      on-screen boxes, and the bar plugin draws a click-through marker over
+      the actual text. A subtitle-bar mode and off switch sit next to it in
+      the panel. Follow-ups, in value order:
+      - [ ] Re-locate when the text moves: a scroll or window move mid-read
+            leaves the boxes behind. Cheap version: re-check the window
+            geometry at each sentence and re-OCR when it changed; scrolling
+            inside the window stays invisible to us, so also consider a
+            periodic re-OCR of one text line as a drift detector.
+      - [ ] The "Screen" (region OCR) reading flow already runs tesseract to
+            get its text; keep those word boxes instead of re-locating, and
+            the marker there becomes exact for free.
+      - [ ] AT-SPI as a precision upgrade where it exists (Firefox, GTK):
+            character extents instead of OCR, no scroll staleness. Keep OCR
+            as the universal fallback.
+      - [ ] If the phoneme-weighted timing ever feels off inside long
+            sentences, forced alignment (Vosk small) on the synthesized
+            audio during the write-ahead is the exact fix.
 - [ ] A second opinion on the font research. Atkinson Hyperlegible is the
       default and OpenDyslexic is opt-in because the evidence for it is weak.
       If better evidence turns up either way, the default should move.

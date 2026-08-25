@@ -12,9 +12,16 @@ Protocol: one JSON object per line on the socket, one JSON reply per line.
   {"cmd": "status"}
   {"cmd": "set", "speed": 1.2}
   {"cmd": "reload"}
+  {"cmd": "watch"}
 
 With "wait": true the connection stays open until playback finishes (or the
 client hangs up, which cancels playback). Speech Dispatcher uses that mode.
+
+"watch" turns the connection into an event stream: one JSON line per event
+(start, sentence, word, end) while text is read, timed to the audio so a
+client can highlight the word being spoken. The bar plugin uses it for
+read-along highlighting; with no watcher connected none of the timing work
+happens.
 
 Uses /usr/bin/python3 on purpose: the piper module is installed system-wide
 (AUR piper-tts), not in whatever python mise puts first on PATH.
@@ -25,6 +32,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import queue
 import re
 import signal
 import socket
@@ -320,6 +328,88 @@ def atempo(pcm: bytes, rate: int, factor: float) -> bytes:
 
 
 # --------------------------------------------------------------------------
+# Word timing (read-along highlighting)
+# --------------------------------------------------------------------------
+
+# Neither engine reports word timestamps, but the daemon knows the exact
+# duration of every sentence before its first byte reaches the player. That
+# duration is divided over the words in proportion to their phoneme counts
+# (espeak-ng, one word per input line so numbers and abbreviations expand
+# inside their own line), which keeps the highlight honest within a sentence
+# and exact at every sentence boundary. Languages written without spaces
+# (Chinese, Japanese) fall back to one span per sentence.
+
+ESPEAK_VOICES = {"no": "nb", "zh": "cmn", "he": "he", "ua": "uk"}
+
+
+def word_weights(words: list[str], lang: str) -> list[float]:
+    """Relative duration of each word: phoneme count when espeak-ng can
+    phonemize the language, character count otherwise."""
+    bare = [re.sub(r"[\W_]+", "", w, flags=re.UNICODE) for w in words]
+    weights = [float(max(2, len(b))) if b else 1.0 for b in bare]
+    payload = [(i, b) for i, b in enumerate(bare) if b]
+    if payload:
+        try:
+            r = subprocess.run(
+                ["espeak-ng", "-q", "--ipa", "-v", ESPEAK_VOICES.get(lang, lang or "en")],
+                input="\n".join(b for _, b in payload) + "\n",
+                capture_output=True, text=True, timeout=5,
+            )
+            out = [ln.strip() for ln in r.stdout.split("\n") if ln.strip()]
+            if r.returncode == 0 and len(out) == len(payload):
+                for (i, _), ipa in zip(payload, out):
+                    weights[i] = float(max(2, sum(1 for c in ipa if c not in " ˈˌː")))
+        except Exception:  # noqa: BLE001
+            pass
+    # A word before a comma-class pause owns that pause's time too.
+    for i, w in enumerate(words):
+        if w[-1:] in ",;:":
+            weights[i] += 4.0
+    return weights
+
+
+def silence_bounds(pcm: bytes, rate: int) -> tuple[float, float]:
+    """Seconds of near-silence the model renders before and after the speech;
+    words are distributed over what is left."""
+    try:
+        import numpy as np
+    except Exception:  # noqa: BLE001
+        return 0.0, 0.0
+    samples = np.frombuffer(pcm, dtype=np.int16).astype(np.int32)
+    loud = np.flatnonzero(np.abs(samples) > 330)
+    if loud.size == 0:
+        return 0.0, 0.0
+    return float(loud[0]) / rate, float(samples.size - 1 - loud[-1]) / rate
+
+
+def schedule_words(events: "queue.Queue", uid: int, sentence: str, offset: int,
+                   index: int, count: int, base: float, pcm: bytes, rate: int,
+                   lang: str):
+    """Queue the sentence and word events for one sentence that starts at
+    char `offset` of the utterance and whose audio starts `base` seconds in.
+    All char offsets in the events are global (into the prepared text)."""
+    duration = len(pcm) / 2 / rate
+    if duration <= 0:
+        return
+    events.put((base, {"event": "sentence", "id": uid, "index": index,
+                       "count": count, "start": offset,
+                       "end": offset + len(sentence), "text": sentence}))
+    spans = [(m.start(), m.end()) for m in re.finditer(r"\S+", sentence)]
+    if not spans:
+        return
+    weights = word_weights([sentence[s:e] for s, e in spans], lang)
+    lead, trail = silence_bounds(pcm, rate)
+    speech = max(0.05, duration - lead - trail)
+    total = sum(weights) or 1.0
+    acc = 0.0
+    for (s, e), w in zip(spans, weights):
+        events.put((base + lead + speech * (acc / total),
+                    {"event": "word", "id": uid,
+                     "start": offset + s, "end": offset + e}))
+        acc += w
+
+
+# --------------------------------------------------------------------------
 # Engines
 # --------------------------------------------------------------------------
 
@@ -507,6 +597,8 @@ class Daemon:
         self.current: dict = {}
         self.utterance_id = 0
         self.done = threading.Condition()
+        self.watchers: list[socket.socket] = []
+        self.watch_lock = threading.Lock()
         self.set_state("idle")
 
     # -- state -------------------------------------------------------------
@@ -527,6 +619,23 @@ class Daemon:
             "engines": {lang: getattr(e, "name", "?") for lang, e in self.engines.items()},
             "text": self.current.get("text", "")[:120] if speaking else "",
         }
+
+    def emit(self, event: dict):
+        """Send one event line to every watcher; a watcher that cannot keep
+        up (send timeout) or has hung up is dropped."""
+        if not self.watchers:
+            return
+        data = (json.dumps(event) + "\n").encode()
+        with self.watch_lock:
+            for conn in self.watchers[:]:
+                try:
+                    conn.sendall(data)
+                except Exception:  # noqa: BLE001
+                    self.watchers.remove(conn)
+                    try:
+                        conn.close()
+                    except Exception:  # noqa: BLE001
+                        pass
 
     # -- engines -----------------------------------------------------------
 
@@ -656,6 +765,14 @@ class Daemon:
             uid = self.utterance_id
             cancel = self.cancel
             self.current = {"text": text, "lang": lang, "id": uid}
+            # The prepared text, on disk, so tools that react to the event
+            # stream (omalexia-locate) see exactly the text the offsets in
+            # the word events refer to.
+            try:
+                (RUNTIME / "utterance").write_text(
+                    json.dumps({"id": uid, "lang": lang, "text": text}))
+            except OSError:
+                pass
             # No explicit speed: follow the live setting, re-read between
             # sentences so `set` changes apply mid-text.
             if speed is not None:
@@ -668,10 +785,51 @@ class Daemon:
             thread.start()
         if old is not None and old.is_alive():
             old.join(timeout=2)
+        # With a watcher on the line, find the words on screen while the
+        # first sentence synthesizes; the boxes event usually beats the
+        # first word event.
+        if self.watchers:
+            threading.Thread(target=self._locate, args=(uid, cancel), daemon=True).start()
         return {"ok": True, "id": uid, "lang": lang, "engine": engine.name, "chars": len(text)}
+
+    LOCATE_TOOL = HOME / ".local" / "bin" / "omalexia-locate"
+
+    def _locate(self, uid: int, cancel: threading.Event):
+        """Run omalexia-locate (OCR of the focused window) once per
+        utterance and broadcast the word boxes to every watcher. One retry:
+        the first attempt can race a window that is still painting."""
+        tool = str(self.LOCATE_TOOL) if self.LOCATE_TOOL.exists() else "omalexia-locate"
+        for attempt in (1, 2):
+            if cancel.is_set() or self.utterance_id != uid:
+                return
+            t0 = time.time()
+            try:
+                r = subprocess.run([tool], capture_output=True, timeout=30)
+                reply = json.loads(r.stdout.decode("utf-8", "replace") or "{}")
+            except Exception as exc:  # noqa: BLE001
+                log(f"locate: {exc}")
+                return
+            log(f"locate attempt {attempt}: {time.time() - t0:.2f}s, "
+                f"ok={reply.get('ok')} {reply.get('error') or ''}"
+                f"{reply.get('matched') if reply.get('ok') else ''}")
+            if reply.get("ok") and reply.get("id") == uid:
+                event = {"event": "boxes", "id": uid,
+                         "matched": reply.get("matched"), "total": reply.get("total"),
+                         "boxes": reply.get("boxes") or []}
+                with self.lock:
+                    if self.utterance_id == uid:
+                        self.current["boxes"] = event
+                self.emit(event)
+                return
+            log(f"locate attempt {attempt}: {reply.get('error') or 'utterance changed'}")
+            cancel.wait(2.0)
 
     def _run(self, engine, text: str, speed: float | None, cancel: threading.Event, uid: int):
         player = None
+        emitter = None
+        emitter_stop = threading.Event()
+        events: queue.Queue = queue.Queue()
+        clock = {"start": None}  # monotonic time of the first byte written
         try:
             player = Player(engine.rate)
             with self.lock:
@@ -681,28 +839,60 @@ class Daemon:
                 self.player = player
             last_speed = None
             gap_ms = getattr(engine, "gap_ms", 0)
-            started = None  # when playback (first write) began
             queued = 0.0    # seconds of audio handed to the player
             lead_max = 4.0  # buffer this far ahead; also the ceiling on how
                             # long a mid-text speed change can take to apply
 
             def write_paced(pcm: bytes) -> bool:
-                nonlocal started, queued
-                while started is not None and not cancel.is_set():
-                    lead = queued - (time.monotonic() - started)
+                nonlocal queued
+                while clock["start"] is not None and not cancel.is_set():
+                    lead = queued - (time.monotonic() - clock["start"])
                     if lead < lead_max:
                         break
                     cancel.wait(min(lead - lead_max, 0.2))
                 if cancel.is_set() or not player.write(pcm):
                     return False
-                if started is None:
-                    started = time.monotonic()
+                if clock["start"] is None:
+                    clock["start"] = time.monotonic()
                 queued += len(pcm) / 2 / engine.rate
                 return True
 
-            for sentence in split_sentences(text):
+            # Highlight events ride the same clock as the audio: each event
+            # is stamped with its playback time when the sentence is queued,
+            # and this thread emits it to the watchers at that moment.
+            def emit_due():
+                while True:
+                    item = events.get()
+                    if item is None:
+                        return
+                    at, event = item
+                    while clock["start"] is None:
+                        if cancel.is_set() or emitter_stop.is_set():
+                            return
+                        cancel.wait(0.05)
+                    while not cancel.is_set() and not emitter_stop.is_set():
+                        delay = clock["start"] + at - time.monotonic()
+                        if delay <= 0:
+                            break
+                        cancel.wait(min(delay, 0.2))
+                    if cancel.is_set() or emitter_stop.is_set():
+                        return
+                    self.emit(event)
+
+            emitter = threading.Thread(target=emit_due, daemon=True)
+            emitter.start()
+            lang = self.current.get("lang", "")
+            self.emit({"event": "start", "id": uid, "lang": lang, "chars": len(text)})
+
+            sentences = split_sentences(text)
+            pos = 0
+            for index, sentence in enumerate(sentences):
                 if cancel.is_set():
                     break
+                offset = text.find(sentence, pos)
+                if offset < 0:
+                    offset = pos
+                pos = offset + len(sentence)
                 now = speed if speed is not None else float(self.config["tts"]["speed"])
                 if last_speed is not None and now != last_speed:
                     log(f"speed {last_speed} -> {now} mid-utterance")
@@ -714,12 +904,32 @@ class Daemon:
                 last_speed = now
                 engine_speed = min(now, ENGINE_SPEED_MAX)
                 stretch = now / engine_speed
-                for pcm in engine.synthesize(sentence, engine_speed, cancel):
-                    if stretch > 1.01:
-                        pcm = atempo(pcm, engine.rate, stretch)
-                    if not write_paced(pcm):
-                        cancel.set()
+                # One sentence, one buffer. Both engines deliver a sentence
+                # as a single chunk anyway, and knowing the exact duration
+                # before the first byte is written is what keeps the word
+                # highlight honest.
+                pcm = b"".join(engine.synthesize(sentence, engine_speed, cancel))
+                if cancel.is_set():
+                    break
+                if not pcm:
+                    continue
+                if stretch > 1.01:
+                    pcm = atempo(pcm, engine.rate, stretch)
+                if self.watchers:
+                    schedule_words(events, uid, sentence, offset, index,
+                                   len(sentences), queued, pcm, engine.rate, lang)
+                if not write_paced(pcm):
+                    cancel.set()
+                    break
+            if not cancel.is_set():
+                # Let the playback clock catch up before closing the sink so
+                # the emitter delivers the tail events; pw-play plays out its
+                # buffered audio during this wait, so nothing gets longer.
+                while clock["start"] is not None and not cancel.is_set():
+                    remaining = clock["start"] + queued - time.monotonic()
+                    if remaining <= 0:
                         break
+                    cancel.wait(min(remaining, 0.2))
             if not cancel.is_set():
                 player.finish()
         except Exception as exc:  # noqa: BLE001
@@ -727,6 +937,14 @@ class Daemon:
         finally:
             if player is not None:
                 player.kill()
+            events.put(None)
+            if emitter is not None:
+                # A finished utterance has already played every scheduled
+                # event; the stop flag only frees an emitter that never saw
+                # playback start.
+                emitter.join(timeout=2)
+                emitter_stop.set()
+            self.emit({"event": "end", "id": uid})
             with self.lock:
                 if self.utterance_id == uid and not cancel.is_set():
                     self.player = None
@@ -805,6 +1023,32 @@ class Daemon:
             elif cmd == "reload":
                 self.reload()
                 self.send(conn, {"ok": True, **self.status()})
+            elif cmd == "watch":
+                conn.settimeout(1.0)
+                with self.watch_lock:
+                    self.watchers.append(conn)
+                self.send(conn, {"ok": True, "event": "hello", **self.status()})
+                # A watcher joining mid-utterance still gets the boxes.
+                with self.lock:
+                    speaking = self.worker is not None and self.worker.is_alive()
+                    boxes = self.current.get("boxes") if speaking else None
+                if boxes:
+                    self.send(conn, boxes)
+                try:
+                    # Sit on the connection until the watcher hangs up; the
+                    # timeout only exists so a dead peer is noticed.
+                    while True:
+                        try:
+                            if not conn.recv(4096):
+                                break
+                        except socket.timeout:
+                            continue
+                        except OSError:
+                            break
+                finally:
+                    with self.watch_lock:
+                        if conn in self.watchers:
+                            self.watchers.remove(conn)
             else:
                 self.send(conn, {"ok": False, "error": f"unknown command: {cmd}"})
 

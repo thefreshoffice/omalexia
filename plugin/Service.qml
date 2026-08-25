@@ -102,12 +102,13 @@ Item {
   function applyOptimistic(key, value) {
     function clone(o) { return JSON.parse(JSON.stringify(o || ({}))) }
     var truthy = value === "true"
-    if (key === "speed" || key === "language" || key === "daemon"
+    if (key === "speed" || key === "language" || key === "daemon" || key === "highlight"
         || key.indexOf("voice:") === 0 || key.indexOf("engine:") === 0) {
       var r = clone(read)
       if (key === "speed") r.speed = Number(value)
       else if (key === "language") r.language = value
       else if (key === "daemon") r.daemonActive = truthy
+      else if (key === "highlight") r.highlightMode = value
       else {
         var isEngine = key.indexOf("engine:") === 0
         var code = key.substring(isEngine ? 7 : 6)
@@ -182,6 +183,122 @@ Item {
   function openKeys() { act("keys") }
   function openMenu() { act("menu") }
   function toggleDaemon() { set("daemon", daemonActive ? "false" : "true") }
+
+  // ---- read-along highlight ------------------------------------------
+  // While highlighting is on and the daemon runs, a long-lived watch
+  // connection streams sentence and word events timed to the audio;
+  // Highlight.qml renders them. Dropping the connection is also the
+  // daemon's cue to skip the word-timing work entirely.
+  //
+  // For mode "text" the daemon also runs omalexia-locate (OCR of the
+  // focused window) once per utterance and broadcasts a "boxes" event
+  // mapping the word events' char offsets to on-screen positions, so the
+  // marker lands on the actual text being read.
+
+  readonly property string highlightMode: {
+    var mode = read.highlightMode
+    return mode === "bar" || mode === "off" ? String(mode) : "text"
+  }
+  readonly property bool highlightEnabled: highlightMode !== "off"
+  property int highlightUtterance: -1
+  property string highlightSentence: ""
+  property int highlightSentenceStart: -1
+  property int highlightWordStart: -1
+  property int highlightWordEnd: -1
+  property var highlightBoxes: ({})
+  property var highlightBox: null
+
+  function clearHighlight() {
+    highlightSentence = ""
+    highlightSentenceStart = -1
+    highlightWordStart = -1
+    highlightWordEnd = -1
+    highlightBox = null
+  }
+
+  function handleSpeakEvent(line) {
+    var ev
+    try { ev = JSON.parse(line) } catch (e) { return }
+    if (!ev || !ev.event) return
+    if (ev.event === "start") {
+      highlightUtterance = Number(ev.id)
+      highlightBoxes = {}
+      clearHighlight()
+    } else if (ev.event === "boxes") {
+      // Ignore boxes for an utterance we are not on (unless we joined the
+      // stream mid-utterance and never saw its start).
+      if (highlightUtterance >= 0 && Number(ev.id) !== highlightUtterance) return
+      var map = {}
+      var list = ev.boxes || []
+      for (var i = 0; i < list.length; i++) map[String(list[i].start)] = list[i]
+      highlightBoxes = map
+      // Reading may already be a few words in when OCR finishes.
+      if (highlightWordStart >= 0) {
+        var cur = map[String(highlightWordStart)]
+        highlightBox = cur === undefined ? null : cur
+      }
+    } else if (ev.event === "sentence") {
+      highlightSentence = String(ev.text || "")
+      highlightSentenceStart = ev.start === undefined ? -1 : Number(ev.start)
+      highlightWordStart = -1
+      highlightWordEnd = -1
+      highlightBox = null
+    } else if (ev.event === "word") {
+      highlightWordStart = Number(ev.start)
+      highlightWordEnd = Number(ev.end)
+      var b = highlightBoxes[String(ev.start)]
+      highlightBox = b === undefined ? null : b
+    } else if (ev.event === "end") {
+      highlightBoxes = {}
+      clearHighlight()
+    }
+  }
+
+  // State dump for `quickshell ipc` while chasing sync or overlay issues.
+  function highlightDebug() {
+    var boxCount = 0
+    for (var k in highlightBoxes) boxCount++
+    return {
+      mode: highlightMode,
+      enabled: highlightEnabled,
+      daemonActive: daemonActive,
+      watchConnected: speakWatch.connected,
+      utterance: highlightUtterance,
+      boxes: boxCount,
+      wordStart: highlightWordStart,
+      sentence: highlightSentence.substring(0, 48),
+      box: highlightBox ? JSON.stringify(highlightBox) : null
+    }
+  }
+
+  function syncWatch() {
+    var want = highlightEnabled && daemonActive
+    if (want !== speakWatch.connected) speakWatch.connected = want
+  }
+
+  onHighlightEnabledChanged: syncWatch()
+  onDaemonActiveChanged: syncWatch()
+
+  Socket {
+    id: speakWatch
+    path: Quickshell.env("XDG_RUNTIME_DIR") + "/omalexia/speakd.sock"
+    parser: SplitParser {
+      onRead: function(line) { root.handleSpeakEvent(String(line)) }
+    }
+    onConnectionStateChanged: {
+      if (connected) { write("{\"cmd\": \"watch\"}\n"); flush() }
+      else root.clearHighlight()
+    }
+  }
+
+  Timer {
+    // Retry while the watch should be up but is not (daemon just started,
+    // daemon restarted underneath us).
+    interval: 4000
+    repeat: true
+    running: root.highlightEnabled && root.daemonActive && !speakWatch.connected
+    onTriggered: root.syncWatch()
+  }
 
   Timer {
     interval: root.refreshIntervalSec * 1000

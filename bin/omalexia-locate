@@ -20,6 +20,12 @@ readable on screen is locatable. The price: boxes are a snapshot, so
 scrolling mid-read leaves them behind (reading mode pins the window, which
 is the intended pairing).
 
+Speed matters here: the marker should join within the first sentence. The
+screenshot is raw PPM (no codec time), preprocessing is numpy, OCR runs as
+single-threaded tesseract workers on concurrent horizontal bands, and a
+selection is first looked for in a band around the mouse cursor, where the
+user just selected it, before paying for the whole window.
+
 Testing hooks: --image FILE --origin X,Y --scale S skip hyprctl and grim
 and treat FILE as a screenshot of a region at layout position X,Y taken at
 scale S.
@@ -34,6 +40,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unicodedata
 from pathlib import Path
 
@@ -48,6 +55,9 @@ TESS_LANGS = {
     "fi": "fin", "pl": "pol", "cs": "ces", "ro": "ron", "hu": "hun",
     "tr": "tur", "ru": "rus", "uk": "ukr", "el": "ell",
 }
+
+# Logical pixels above and below the cursor for the fast-path band.
+CURSOR_BAND = 450
 
 
 def fail(reason: str) -> int:
@@ -84,38 +94,138 @@ def focused_window() -> tuple[float, float, float, float, float] | None:
     return float(x), float(y), float(w), float(h), scale
 
 
-def ocr_words(image: Path, lang: str) -> list[tuple[str, float, float, float, float]]:
-    """(normalized word, x, y, w, h) per OCR word, in image pixels."""
+def cursor_pos() -> tuple[float, float] | None:
+    """Layout position of the mouse cursor ("x, y" from hyprctl)."""
+    try:
+        parts = run(["hyprctl", "cursorpos"], timeout=5).stdout.decode().replace(",", " ").split()
+        return float(parts[0]), float(parts[1])
+    except (IndexError, ValueError):
+        return None
+
+
+def load_gray(image: Path):
+    """Grayscale uint8 array (H, W) from a PPM/PGM file (PNG and friends go
+    through one magick conversion, for the test hooks)."""
+    import numpy as np
+    if image.suffix in (".ppm", ".pgm", ".pnm"):
+        data = image.read_bytes()
+    else:
+        r = run(["magick", str(image), "-depth", "8", "ppm:-"], timeout=30)
+        if r.returncode != 0:
+            return None
+        data = r.stdout
+    # PNM header: magic, width, height, maxval, separated by whitespace and
+    # optional '#' comments, then one whitespace byte before the raster.
+    tokens = []
+    pos = 0
+    while len(tokens) < 4 and pos < len(data):
+        if data[pos:pos + 1].isspace():
+            pos += 1
+        elif data[pos:pos + 1] == b"#":
+            pos = data.index(b"\n", pos) + 1
+        else:
+            end = pos
+            while end < len(data) and not data[end:end + 1].isspace():
+                end += 1
+            tokens.append(data[pos:end])
+            pos = end
+    if len(tokens) < 4 or tokens[0] not in (b"P5", b"P6"):
+        return None
+    width, height = int(tokens[1]), int(tokens[2])
+    maxval = int(tokens[3])
+    pos += 1
+    channels = 3 if tokens[0] == b"P6" else 1
+    count = width * height * channels
+    if maxval > 255:  # 16-bit samples, big-endian per the PNM spec
+        raster = (np.frombuffer(data, dtype=">u2", count=count, offset=pos) >> 8).astype(np.uint8)
+    else:
+        raster = np.frombuffer(data, dtype=np.uint8, count=count, offset=pos)
+    if channels == 3:
+        return (raster.reshape(height, width, 3).sum(axis=2, dtype=np.uint16) // 3).astype(np.uint8)
+    return raster.reshape(height, width)
+
+
+def tess_language(lang: str) -> str:
     tess_lang = TESS_LANGS.get(lang, "eng")
     langs = run(["tesseract", "--list-langs"], timeout=10).stdout.decode("utf-8", "replace")
-    if tess_lang not in langs.split():
-        tess_lang = "eng"
-    # Dark themes have light text on dark ground; tesseract reads a negated
-    # grayscale of those far better. Decide on the mean luminance.
-    gray = image.with_suffix(".gray.png")
-    mean = run(["magick", str(image), "-colorspace", "gray", "-format", "%[fx:mean]", "info:"],
-               timeout=20).stdout.decode().strip()
-    negate = ["-negate"] if mean and float(mean) < 0.5 else []
-    run(["magick", str(image), "-colorspace", "gray", *negate, str(gray)], timeout=20)
-    src = gray if gray.exists() else image
-    r = run(["tesseract", str(src), "-", "-l", tess_lang, "tsv"], timeout=60)
-    gray.unlink(missing_ok=True)
-    if r.returncode != 0:
-        return []
+    return tess_lang if tess_lang in langs.split() else "eng"
+
+
+def ocr_array(gray, base_y: int, tess_lang: str, stem: Path) -> list[tuple[str, float, float, float, float]]:
+    """(normalized word, x, y, w, h) per OCR word in image pixels, y offset
+    by base_y. A dense screen (a full terminal of text) is slow to OCR in
+    one piece: tesseract's runtime grows with the number of text lines, and
+    its OpenMP threading loses about 3x to overhead. Single-threaded
+    workers on overlapping horizontal bands, run concurrently, get a 13 s
+    Claude TUI screen down to about 2 s. Bands are written as raw PGM so no
+    time goes into image codecs."""
+    height, width = gray.shape
+    bands = max(1, min(8, height // 300))
+    overlap = 60
+    band_h = height // bands
+    env = dict(os.environ, OMP_THREAD_LIMIT="1")
+    jobs = []
+    crops = []
+    for i in range(bands):
+        top = max(0, i * band_h - (overlap if i else 0))
+        bottom = min(height, (i + 1) * band_h + (overlap if i < bands - 1 else 0))
+        src = stem.with_suffix(f".band{i}.pgm")
+        crops.append(src)
+        chunk = gray[top:bottom]
+        src.write_bytes(b"P5\n%d %d\n255\n" % (width, bottom - top) + chunk.tobytes())
+        jobs.append((top, subprocess.Popen(
+            ["tesseract", str(src), "-", "-l", tess_lang, "tsv"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)))
+
     words = []
-    for line in r.stdout.decode("utf-8", "replace").splitlines()[1:]:
-        cols = line.split("\t")
-        if len(cols) < 12 or cols[0] != "5":
-            continue
+    seen: dict[str, list[tuple[float, float]]] = {}
+    for top, proc in jobs:
         try:
-            left, top, width, height = (float(c) for c in cols[6:10])
-            conf = float(cols[10])
-        except ValueError:
+            out = proc.communicate(timeout=60)[0].decode("utf-8", "replace")
+        except subprocess.TimeoutExpired:
+            proc.kill()
             continue
-        text = norm(cols[11])
-        if conf >= 30 and text:
-            words.append((text, left, top, width, height))
+        for line in out.splitlines()[1:]:
+            cols = line.split("\t")
+            if len(cols) < 12 or cols[0] != "5":
+                continue
+            try:
+                left, band_top, w, h = (float(c) for c in cols[6:10])
+                conf = float(cols[10])
+            except ValueError:
+                continue
+            text = norm(cols[11])
+            if conf < 30 or not text:
+                continue
+            y = band_top + top
+            # The overlap zone yields the same word twice; keep the first.
+            if any(abs(px - left) < 8 and abs(py - y) < 8 for px, py in seen.get(text, ())):
+                continue
+            seen.setdefault(text, []).append((left, y))
+            words.append((text, left, y + base_y, w, h))
+    for crop in crops:
+        crop.unlink(missing_ok=True)
     return words
+
+
+def align(spoken, ocr, origin, scale) -> list[dict]:
+    """Match the spoken word sequence to the OCR word sequence and return
+    layout-coordinate boxes keyed by the spoken char offsets."""
+    matcher = difflib.SequenceMatcher(
+        a=[t[2] for t in spoken], b=[t[0] for t in ocr], autojunk=False)
+    boxes = []
+    for a, b, size in matcher.get_matching_blocks():
+        for k in range(size):
+            start, end, _ = spoken[a + k]
+            _, left, top, width, height = ocr[b + k]
+            boxes.append({
+                "start": start, "end": end,
+                "x": round(origin[0] + left / scale, 1),
+                "y": round(origin[1] + top / scale, 1),
+                "w": round(width / scale, 1),
+                "h": round(height / scale, 1),
+            })
+    return boxes
 
 
 def main() -> int:
@@ -142,52 +252,79 @@ def main() -> int:
     lang = str(utterance.get("lang") or "en")
     if not text:
         return fail("empty utterance")
-
-    if image is None:
-        window = focused_window()
-        if window is None:
-            return fail("no focused window")
-        x, y, w, h, scale = window
-        origin = (x, y)
-        shot = Path(tempfile.mkstemp(suffix=".png", dir=RUNTIME if RUNTIME.exists() else None)[1])
-        try:
-            r = run(["grim", "-g", f"{x:.0f},{y:.0f} {w:.0f}x{h:.0f}", str(shot)], timeout=15)
-            if r.returncode != 0:
-                return fail("screenshot failed")
-            ocr = ocr_words(shot, lang)
-        finally:
-            shot.unlink(missing_ok=True)
-    else:
-        origin = origin or (0.0, 0.0)
-        ocr = ocr_words(image, lang)
-    if not ocr:
-        return fail("no readable text on screen")
-
     spoken = [(m.start(), m.end(), norm(m.group()))
               for m in re.finditer(r"\S+", text)]
     spoken = [t for t in spoken if t[2]]
     if not spoken:
         return fail("nothing to match")
 
-    matcher = difflib.SequenceMatcher(
-        a=[t[2] for t in spoken], b=[t[0] for t in ocr], autojunk=False)
-    boxes = []
-    for a, b, size in matcher.get_matching_blocks():
-        for k in range(size):
-            start, end, _ = spoken[a + k]
-            _, left, top, width, height = ocr[b + k]
-            boxes.append({
-                "start": start, "end": end,
-                "x": round(origin[0] + left / scale, 1),
-                "y": round(origin[1] + top / scale, 1),
-                "w": round(width / scale, 1),
-                "h": round(height / scale, 1),
-            })
+    timings: dict = {}
+    cursor = None
+    shot = None
+    t0 = time.time()
+    if image is None:
+        window = focused_window()
+        timings["window"] = round(time.time() - t0, 2)
+        if window is None:
+            return fail("no focused window")
+        x, y, w, h, scale = window
+        origin = (x, y)
+        cursor = cursor_pos()
+        # PPM: no PNG encode in grim, no decode here; numpy reads it raw.
+        shot = Path(tempfile.mkstemp(suffix=".ppm", dir=RUNTIME if RUNTIME.exists() else None)[1])
+        t0 = time.time()
+        r = run(["grim", "-t", "ppm", "-g", f"{x:.0f},{y:.0f} {w:.0f}x{h:.0f}", str(shot)], timeout=15)
+        timings["shot"] = round(time.time() - t0, 2)
+        if r.returncode != 0:
+            shot.unlink(missing_ok=True)
+            return fail("screenshot failed")
+        image = shot
+    else:
+        origin = origin or (0.0, 0.0)
+
+    try:
+        try:
+            gray = load_gray(image)
+        except ImportError:
+            return fail("numpy is not available to /usr/bin/python3")
+        if gray is None or gray.size == 0:
+            return fail("could not read the screenshot")
+        # Dark themes have light text on dark ground; tesseract reads those
+        # far better negated.
+        if gray.mean() < 128:
+            gray = 255 - gray
+        tess_lang = tess_language(lang)
+
+        boxes = []
+        # Fast path: the selection was usually just made with the mouse, so
+        # look in a band around the cursor first; a fraction of the OCR work
+        # when the window is a full screen of text.
+        if cursor is not None and origin[1] <= cursor[1] <= origin[1] + gray.shape[0] / scale:
+            y0 = int(max(0.0, (cursor[1] - origin[1] - CURSOR_BAND) * scale))
+            y1 = int(min(gray.shape[0], (cursor[1] - origin[1] + CURSOR_BAND) * scale))
+            if y1 - y0 >= 200 and y1 - y0 < gray.shape[0]:
+                t0 = time.time()
+                ocr = ocr_array(gray[y0:y1], y0, tess_lang, image)
+                boxes = align(spoken, ocr, origin, scale)
+                timings["band"] = round(time.time() - t0, 2)
+                if len(boxes) < 0.85 * len(spoken):
+                    boxes = []  # not (fully) near the cursor; scan it all
+        if not boxes:
+            t0 = time.time()
+            ocr = ocr_array(gray, 0, tess_lang, image)
+            timings["ocr"] = round(time.time() - t0, 2)
+            if not ocr:
+                return fail("no readable text on screen")
+            boxes = align(spoken, ocr, origin, scale)
+    finally:
+        if shot is not None:
+            shot.unlink(missing_ok=True)
+
     # A partial match is fine (a long article is only partly on screen); a
     # tiny one means the focused window shows different text.
     if len(boxes) < 8 and len(boxes) / len(spoken) < 0.5:
         return fail(f"text not on screen ({len(boxes)}/{len(spoken)} words matched)")
-    print(json.dumps({"ok": True, "id": utterance.get("id"),
+    print(json.dumps({"ok": True, "id": utterance.get("id"), "t": timings,
                       "matched": len(boxes), "total": len(spoken), "boxes": boxes}))
     return 0
 

@@ -479,6 +479,10 @@ class KokoroWorker:
             stdout=subprocess.PIPE,
             stderr=sys.stderr,
             cwd=KOKORO_DIR,
+            # Slightly nice so its burst does not push omalexia-locate's OCR
+            # workers off the fast cores; the 4 s write-ahead buffer absorbs
+            # what little this costs the synthesis.
+            preexec_fn=lambda: os.nice(5),
         )
         self.lock = threading.Lock()
         line = self.proc.stdout.readline()
@@ -811,7 +815,7 @@ class Daemon:
                 return
             log(f"locate attempt {attempt}: {time.time() - t0:.2f}s, "
                 f"ok={reply.get('ok')} {reply.get('error') or ''}"
-                f"{reply.get('matched') if reply.get('ok') else ''}")
+                f"{reply.get('matched') if reply.get('ok') else ''} {reply.get('t') or ''}")
             if reply.get("ok") and reply.get("id") == uid:
                 event = {"event": "boxes", "id": uid,
                          "matched": reply.get("matched"), "total": reply.get("total"),

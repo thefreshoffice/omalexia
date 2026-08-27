@@ -185,6 +185,13 @@ def highlight_mode() -> str:
     return mode if mode in ("text", "bar", "off") else "text"
 
 
+def highlight_style() -> str:
+    """Within "text" mode: mark the spoken "word" (the standard), the whole
+    "sentence", or "both" (sentence wash with the word pill on top)."""
+    style = read_text(OMALEXIA_STATE / "highlight-style")
+    return style if style in ("word", "sentence", "both") else "word"
+
+
 def read_aloud_status() -> dict:
     cfg = omalexia_config()
     live = speakd_request({"cmd": "status"})
@@ -215,6 +222,7 @@ def read_aloud_status() -> dict:
         ],
         "kokoroInstalled": kokoro,
         "highlightMode": highlight_mode(),
+        "highlightStyle": highlight_style(),
         "highlightDelay": round(float(live.get("highlightDelay")
                                       or read_text(OMALEXIA_STATE / "highlight-delay")
                                       or 0.15), 2),
@@ -390,6 +398,11 @@ def set_value(key: str, value: str) -> None:
             raise SystemExit(f"unknown highlight mode: {value}")
         OMALEXIA_STATE.mkdir(parents=True, exist_ok=True)
         (OMALEXIA_STATE / "highlight").write_text(value + "\n")
+    elif key == "highlightStyle":
+        if value not in ("word", "sentence", "both"):
+            raise SystemExit(f"unknown highlight style: {value}")
+        OMALEXIA_STATE.mkdir(parents=True, exist_ok=True)
+        (OMALEXIA_STATE / "highlight-style").write_text(value + "\n")
     elif key == "dictationEngine":
         run(["voxtype", "config", "set", "engine", value], timeout=10)
         run(["systemctl", "--user", "restart", "voxtype.service"], timeout=15)

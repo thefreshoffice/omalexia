@@ -50,6 +50,7 @@ Panel {
     var voiceLangs = read.languages || []
     for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
     keys.push("read.language", "read.highlight")
+    if (String(read.highlightMode || "text") === "text") keys.push("read.style")
     if (String(read.highlightMode || "text") !== "off") keys.push("read.timing")
     keys.push("read.test")
     if (showDictation) {
@@ -119,6 +120,8 @@ Panel {
       omalexia.set("language", cycleOption(languageOptions, read.language, dx))
     } else if (key === "read.highlight") {
       omalexia.set("highlight", cycleOption(highlightOptions, read.highlightMode || "text", dx))
+    } else if (key === "read.style") {
+      omalexia.set("highlightStyle", cycleOption(styleOptions, read.highlightStyle || "word", dx))
     } else if (key === "read.timing") {
       var delay = Math.max(-0.3, Math.min(1.5, Number(read.highlightDelay || 0.15) + dx * 0.05))
       omalexia.set("highlightDelay", delay.toFixed(2))
@@ -156,6 +159,7 @@ Panel {
       break
     case "read.language": languageDropdown.toggle(); break
     case "read.highlight": highlightDropdown.toggle(); break
+    case "read.style": styleDropdown.toggle(); break
     case "dict.actions":
       if (actionIndex === 0) omalexia.toggleDictation()
       else if (actionIndex === 1) omalexia.cancelDictation()
@@ -221,6 +225,11 @@ Panel {
     { value: "text", label: "In the text being read" },
     { value: "bar", label: "Subtitle bar at the bottom" },
     { value: "off", label: "Off" }
+  ]
+  readonly property var styleOptions: [
+    { value: "word", label: "The word being spoken" },
+    { value: "sentence", label: "The whole sentence" },
+    { value: "both", label: "Sentence and word together" }
   ]
   readonly property var sizeOptions: [
     { value: "12", label: "Normal (12)" },
@@ -501,6 +510,16 @@ Panel {
               options: root.highlightOptions
               current: String(root.read.highlightMode || "text")
               onChosen: function(v) { omalexia.set("highlight", v) }
+            }
+
+            DropdownRow {
+              id: styleDropdown
+              visible: String(root.read.highlightMode || "text") === "text"
+              rowKey: "read.style"
+              label: "Highlight style"
+              options: root.styleOptions
+              current: String(root.read.highlightStyle || "word")
+              onChosen: function(v) { omalexia.set("highlightStyle", v) }
             }
 
             // Sync knob for what the ear actually hears: wireless

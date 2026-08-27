@@ -103,13 +103,14 @@ Item {
     function clone(o) { return JSON.parse(JSON.stringify(o || ({}))) }
     var truthy = value === "true"
     if (key === "speed" || key === "language" || key === "daemon" || key === "highlight"
-        || key === "highlightDelay"
+        || key === "highlightStyle" || key === "highlightDelay"
         || key.indexOf("voice:") === 0 || key.indexOf("engine:") === 0) {
       var r = clone(read)
       if (key === "speed") r.speed = Number(value)
       else if (key === "language") r.language = value
       else if (key === "daemon") r.daemonActive = truthy
       else if (key === "highlight") r.highlightMode = value
+      else if (key === "highlightStyle") r.highlightStyle = value
       else if (key === "highlightDelay") r.highlightDelay = Number(value)
       else {
         var isEngine = key.indexOf("engine:") === 0
@@ -202,6 +203,10 @@ Item {
     return mode === "bar" || mode === "off" ? String(mode) : "text"
   }
   readonly property bool highlightEnabled: highlightMode !== "off"
+  readonly property string highlightStyle: {
+    var style = read.highlightStyle
+    return style === "sentence" || style === "both" ? String(style) : "word"
+  }
   property int highlightUtterance: -1
   property string highlightSentence: ""
   property int highlightSentenceStart: -1
@@ -304,6 +309,7 @@ Item {
     for (var k in highlightBoxes) boxCount++
     return {
       mode: highlightMode,
+      style: highlightStyle,
       enabled: highlightEnabled,
       daemonActive: daemonActive,
       watchConnected: watchConnected(),

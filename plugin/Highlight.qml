@@ -17,6 +17,7 @@ PanelWindow {
   property var bar: null
 
   readonly property string mode: service ? service.highlightMode : "off"
+  readonly property string style: service ? service.highlightStyle : "word"
   readonly property string sentence: service ? String(service.highlightSentence || "") : ""
   readonly property int sentenceStart: service ? Number(service.highlightSentenceStart) : -1
   readonly property int wordStart: service ? Number(service.highlightWordStart) : -1
@@ -55,12 +56,14 @@ PanelWindow {
 
   // ---- mode "text": sentence wash + marker over the word ---------------
 
-  // The whole sentence being read gets a faint, steady wash; the pill for
-  // the spoken word rides on top. The wash appears the moment a sentence
+  // The whole sentence being read gets a steady wash; with the word pill
+  // riding on top ("both", faint) or standing alone ("sentence", stronger,
+  // since it is then the only cue). It appears the moment a sentence
   // starts and absorbs the odd word the matcher could not place, so the
-  // highlight never blinks.
+  // highlight never blinks. Style "word" shows the pill only.
   Repeater {
-    model: root.mode === "text" && root.service ? root.service.highlightSentenceRects : []
+    model: root.mode === "text" && root.style !== "word" && root.service
+           ? root.service.highlightSentenceRects : []
     Rectangle {
       required property var modelData
       x: modelData.x0 - root.screenX - 3
@@ -68,7 +71,9 @@ PanelWindow {
       width: modelData.x1 - modelData.x0 + 6
       height: modelData.h + 4
       radius: Style.space(4)
-      color: Qt.alpha(root.markerBase, 0.12)
+      color: Qt.alpha(root.markerBase, root.style === "sentence" ? 0.26 : 0.12)
+      border.width: root.style === "sentence" ? 1 : 0
+      border.color: Qt.alpha(root.markerBase, 0.5)
     }
   }
 
@@ -79,7 +84,7 @@ PanelWindow {
 
   Rectangle {
     id: marker
-    visible: root.mode === "text" && root.lastBox !== null
+    visible: root.mode === "text" && root.style !== "sentence" && root.lastBox !== null
     opacity: root.showMarker ? 1.0 : 0.0
     x: root.lastBox ? root.lastBox.x - root.screenX - 3 : 0
     y: root.lastBox ? root.lastBox.y - root.screenY - 2 : 0

@@ -139,7 +139,10 @@ the one thing software cannot see, the lag of the listening device;
 wireless headphones typically want a few tenths of a second more, tuned
 by ear while reading (it applies live). The panel's "Highlight words" setting
 switches between marking the text, a subtitle bar at the bottom of the
-screen showing the sentence with the spoken word in a pill, or off. Pairs
+screen showing the sentence with the spoken word in a pill, or off; the
+"Highlight style" setting picks what gets marked in the text: the word
+being spoken (the standard), the whole sentence, or both together (a
+sentence wash with the word pill riding on it). Pairs
 best with reading mode, which keeps the window still.
 
 Everything is local. Nothing is sent anywhere.

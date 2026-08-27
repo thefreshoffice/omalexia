@@ -267,54 +267,89 @@ def selection_line_runs(sel_text: str) -> list[list[str]]:
     return runs
 
 
-def fit_selection(mask, codes, window, line_runs, np):
-    """Fit the selection's line structure onto candidate row segments.
-    Returns per-line geometry and the grid's cell width, or None."""
-    heights = []
-    lines = []  # (text, left, top, rows, width)
-    for seg, texts in zip(window, line_runs):
+def line_layout(segments, total_lines):
+    """Assign an integer number of text lines to each highlight segment so
+    the counts sum to the selection's line count, by finding one line
+    height that explains every segment. A terminal selection is one tall
+    segment; a browser one may leave a small gap between line boxes."""
+    best = None
+    for seg in segments:
         span = seg[-1] - seg[0] + 1
-        cell_h = span / len(texts)
-        if not 7 <= cell_h <= 90:
+        for k in range(1, min(total_lines, max(1, span // 7)) + 1):
+            height = span / k
+            if not 7 <= height <= 90:
+                continue
+            counts = []
+            residual = 0.0
+            ok = True
+            for other in segments:
+                other_span = other[-1] - other[0] + 1
+                count = max(1, round(other_span / height))
+                if abs(other_span - count * height) > 0.4 * height:
+                    ok = False
+                    break
+                counts.append(count)
+                residual += abs(other_span - count * height)
+            if not ok or sum(counts) != total_lines:
+                continue
+            if best is None or residual < best[0]:
+                best = (residual, counts)
+    if best is None:
+        return None
+    spans = []
+    for seg, count in zip(segments, best[1]):
+        top, bottom = int(seg[0]), int(seg[-1])
+        span = bottom - top + 1
+        for j in range(count):
+            r0 = top + int(round(j * span / count))
+            r1 = top + int(round((j + 1) * span / count)) - 1
+            spans.append((r0, max(r0, r1)))
+    return spans
+
+
+def fit_lines(mask, codes, line_spans, texts, np):
+    """Fit the selection's lines onto the detected text-line row spans.
+    Returns per-line geometry and the grid's cell width, or None."""
+    lines = []  # (text, left, top, rows, width)
+    for (r0, r1), text in zip(line_spans, texts):
+        rows = mask[r0:r1 + 1]
+        density = rows.mean(axis=0)
+        kernel = np.ones(9) / 9
+        smooth = np.convolve(density, kernel, "same")
+        selected = smooth >= 0.55
+        cols = np.flatnonzero(selected)
+        if cols.size == 0:
             return None
-        heights.append(cell_h)
-        for j, text in enumerate(texts):
-            r0 = seg[0] + int(round(j * cell_h))
-            r1 = min(seg[-1], seg[0] + int(round((j + 1) * cell_h)) - 1)
-            if r1 < r0:
-                return None
-            rows = mask[r0:r1 + 1]
-            density = rows.mean(axis=0)
-            kernel = np.ones(9) / 9
-            smooth = np.convolve(density, kernel, "same")
-            selected = smooth >= 0.55
-            cols = np.flatnonzero(selected)
-            if cols.size == 0:
-                return None
-            # largest contiguous run of selected columns
-            splits = np.flatnonzero(np.diff(cols) > 1)
-            pieces = np.split(cols, splits + 1)
-            piece = max(pieces, key=len)
-            left, right = int(piece[0]), int(piece[-1])
-            width = right - left + 1
-            # It must look like text on a highlight: glyph pixels breaking
-            # the fill colour (whatever both colours are), but nowhere near
-            # an unreadable jumble. A solid bar or image fails here.
-            interior = codes[r0:r1 + 1, left:right + 1]
-            fill = np.bincount(interior.ravel(), minlength=4096).max()
-            glyph_frac = 1.0 - fill / interior.size
-            if not 0.02 <= glyph_frac <= 0.6:
-                return None
-            lines.append((text, left, r0, r1 - r0 + 1, width))
-    if max(heights) > 1.4 * min(heights):
-        return None
+        # largest contiguous run of selected columns
+        splits = np.flatnonzero(np.diff(cols) > 1)
+        pieces = np.split(cols, splits + 1)
+        piece = max(pieces, key=len)
+        left, right = int(piece[0]), int(piece[-1])
+        width = right - left + 1
+        # It must look like text on a highlight: glyph pixels breaking
+        # the fill colour (whatever both colours are), but nowhere near
+        # an unreadable jumble. A solid bar or image fails here.
+        interior = codes[r0:r1 + 1, left:right + 1]
+        fill = np.bincount(interior.ravel(), minlength=4096).max()
+        glyph_frac = 1.0 - fill / interior.size
+        if not 0.02 <= glyph_frac <= 0.6:
+            return None
+        lines.append((text, left, r0, r1 - r0 + 1, width))
     ratios = [w / max(1, len(t)) for t, _, _, _, w in lines]
-    cell_w = min(ratios)
-    if not 4 <= cell_w <= 64:
+    if min(ratios) < 3 or max(ratios) > 80:
         return None
-    # Trailing highlighted whitespace may widen a row, but never by much.
-    if any(w > len(t) * cell_w * 1.25 + 4 * cell_w for t, _, _, _, w in lines):
-        return None
+    # Uniform character width means a terminal grid and exact word maths;
+    # varying width means a proportional font (a browser selection), still
+    # line-exact with words placed by their character share of the line.
+    monospace = max(ratios) <= min(ratios) * 1.15
+    cell_w = None
+    if monospace:
+        cell_w = min(ratios)
+        if not 4 <= cell_w <= 64:
+            return None
+        # Trailing highlighted whitespace may widen a row, but never by much.
+        if any(w > len(t) * cell_w * 1.25 + 4 * cell_w for t, _, _, _, w in lines):
+            return None
     chars = [len(t) for t, *_ in lines]
     widths = [w for *_, w in lines]
     if len(lines) >= 3 and len(set(chars)) >= 3 and len(set(widths)) >= 2:
@@ -351,24 +386,38 @@ def selection_boxes(rgb, sel_text, spoken):
         return None
     splits = np.flatnonzero(np.diff(rows) > 3)
     segments = [seg for seg in np.split(rows, splits + 1) if seg[-1] - seg[0] + 1 >= 5]
-    if len(segments) < len(line_runs):
+    flat = [text for run in line_runs for text in run]
+    if not segments or not flat:
         return None
     best = None
-    for s0 in range(len(segments) - len(line_runs) + 1):
-        fit = fit_selection(mask, codes, segments[s0:s0 + len(line_runs)], line_runs, np)
-        if fit and (best is None or fit["score"] > best["score"]):
-            best = fit
+    # The right highlight may sit among unrelated solid regions; try every
+    # window of consecutive segments that can hold the selection's lines.
+    for a in range(len(segments)):
+        for b in range(a, min(len(segments), a + len(flat))):
+            layout = line_layout(segments[a:b + 1], len(flat))
+            if layout is None:
+                continue
+            fit = fit_lines(mask, codes, layout, flat, np)
+            if fit and (best is None or fit["score"] > best["score"]):
+                best = fit
     if best is None:
         return None
 
     cell_w = best["cell_w"]
     sel_words = []  # (norm, x, y, w, h) in image pixels
-    for text, left, top, rows_h, _ in best["lines"]:
+    for text, left, top, rows_h, line_w in best["lines"]:
+        length = max(1, len(text))
         for m in re.finditer(r"\S+", text):
             folded = norm(m.group())
-            if folded:
-                sel_words.append((folded, left + m.start() * cell_w, top,
-                                  (m.end() - m.start()) * cell_w, rows_h))
+            if not folded:
+                continue
+            if cell_w is not None:
+                x = left + m.start() * cell_w
+                w = (m.end() - m.start()) * cell_w
+            else:
+                x = left + line_w * (m.start() / length)
+                w = line_w * ((m.end() - m.start()) / length)
+            sel_words.append((folded, x, top, w, rows_h))
     if not sel_words:
         return None
     matcher = difflib.SequenceMatcher(
@@ -425,9 +474,11 @@ def ocr_array(gray, base_y: int, tess_lang: str) -> list[tuple[str, float, float
         jobs.append((top, subprocess.Popen(
             ["tesseract", str(src), "-", "-l", tess_lang, "tsv"],
             stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
-            # OCR is latency-tolerant; speech synthesis is not. Yield the
-            # fast cores so the voice never pauses for a screenshot.
-            preexec_fn=lambda: os.nice(10))))
+            # OCR is latency-tolerant; speech synthesis is not. Yield a
+            # little so the voice never pauses for a screenshot, but not so
+            # much that a busy system starves the boxes for seconds (the
+            # pre-buffer already shields the audio).
+            preexec_fn=lambda: os.nice(4))))
 
     words = []
     seen: dict[str, list[tuple[float, float]]] = {}

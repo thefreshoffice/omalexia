@@ -116,7 +116,12 @@ own that disagrees with its neighbours' geometry is dropped rather than
 highlighted in the wrong place. That works in any app, browser, PDF viewer
 or terminal, because no app cooperation is needed; when the text is not
 visible (reading the clipboard from elsewhere), nothing is drawn rather
-than something wrong. The panel's "Highlight words" setting
+than something wrong. The locator keeps following for the whole reading,
+the way macOS Spoken Content re-queries text geometry while it speaks:
+about once a second it re-captures the window, finds the tracked text
+again by row-signature correlation (so scrolling and window moves shift
+the marker instead of stranding it), re-fits a moved selection exactly,
+and hides the marker when the text leaves the screen. The panel's "Highlight words" setting
 switches between marking the text, a subtitle bar at the bottom of the
 screen showing the sentence with the spoken word in a pill, or off. Pairs
 best with reading mode, which keeps the window still.
@@ -245,9 +250,10 @@ Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`
   (font, spacing, colours) is the better tool for long web articles.
 - Hyprland does not share the primary selection with XWayland apps; F10
   falls back to `Ctrl+C` there.
-- Read-along highlighting locates the words by OCR when reading starts, so
-  scrolling or moving the window mid-read leaves the marker behind until the
-  next reading. The subtitle bar mode does not have this limit.
+- Read-along highlighting re-checks the screen about once a second while
+  reading, so scrolling and window moves are followed; a very fast fling can
+  lag the marker by a beat, and text that leaves the window hides the marker
+  until it comes back. The subtitle bar mode has none of these limits.
 - Kokoro and Piper "high" voices are not instant on CPU; the defaults are.
 - At 4x a Piper "high" voice synthesizes at roughly the pace it plays, so a
   long 4x session with one can occasionally pause to catch up; "medium"

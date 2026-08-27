@@ -1,20 +1,32 @@
 #!/usr/bin/python3
-"""omalexia-locate: find the words of the current utterance on screen.
+"""omalexia-locate: find and follow the words of the current utterance on
+screen.
 
 Reads the utterance the daemon just started ($XDG_RUNTIME_DIR/omalexia/
 utterance: id, language, prepared text), screenshots the focused window,
-and maps the spoken words to their on-screen boxes. Prints one JSON object:
+and maps the spoken words to their on-screen boxes. Prints one JSON object
+per line:
 
   {"ok": true, "id": N, "backend": "selection|ocr", "matched": n,
    "total": m, "boxes": [{"start": .., "end": .., "x": .., "y": .., "w": .., "h": ..}]}
 
 "start"/"end" are the same global char offsets the daemon's word events
 carry, so an overlay can look a box up straight from an event. Coordinates
-are Hyprland layout (logical) pixels. ok:false means the text could not be
-found on screen (not visible, other window focused, mismatch); the caller
-then simply highlights nothing.
+are Hyprland layout (logical) pixels. ok:false means the text cannot be
+found on screen right now; the caller then simply highlights nothing.
 
-Two backends, best first:
+Without --follow one line is printed and the tool exits. With --follow it
+keeps watching for the rest of the utterance, the way macOS Spoken Content
+re-queries text geometry while it speaks: about once a second the window
+is re-captured, the tracked text region is re-found by row-signature
+correlation (so scrolling and window moves shift the boxes instead of
+stranding them), a moved selection is re-fitted exactly, and text that
+left the screen clears the highlight rather than mislabeling whatever
+took its place. A new line is printed whenever the boxes change. The tool
+exits by itself when the utterance is over (utterance id or daemon state
+file changes).
+
+Two acquisition backends, best first:
 
 selection: when the reading came from a visible selection, the highlight
   itself marks the text. The highlighted rows are found by color (long
@@ -28,9 +40,6 @@ ocr: tesseract word boxes aligned to the spoken words (banded,
   and screen reads, or when the selection is gone from view. Lone matches
   that disagree geometrically with their neighbours are dropped rather
   than highlighted in the wrong place.
-
-Boxes are a snapshot either way, so scrolling mid-read leaves them behind
-(reading mode pins the window, which is the intended pairing).
 
 Testing hooks: --image FILE --origin X,Y --scale S skip hyprctl and grim;
 --selection FILE stands in for the primary selection.
@@ -61,13 +70,9 @@ TESS_LANGS = {
     "tr": "tur", "ru": "rus", "uk": "ukr", "el": "ell",
 }
 
-# Logical pixels above and below the cursor for the OCR fast-path band.
-CURSOR_BAND = 450
-
-
-def fail(reason: str) -> int:
-    print(json.dumps({"ok": False, "error": reason}))
-    return 0
+CURSOR_BAND = 450   # logical px above/below the cursor for the OCR fast pass
+TICK = 0.7          # seconds between follow checks
+SIG_COLS = 48       # sampled columns per row in the tracking signature
 
 
 def norm(word: str) -> str:
@@ -79,15 +84,23 @@ def run(cmd, timeout=15, **kw):
     return subprocess.run(cmd, capture_output=True, timeout=timeout, check=False, **kw)
 
 
-def focused_window() -> tuple[float, float, float, float, float] | None:
-    """Layout x, y, w, h of the focused window plus its monitor's scale."""
-    try:
-        win = json.loads(run(["hyprctl", "activewindow", "-j"], timeout=5).stdout or "{}")
-        monitors = json.loads(run(["hyprctl", "monitors", "-j"], timeout=5).stdout or "[]")
-    except ValueError:
-        return None
-    if not win.get("address"):
-        return None
+def emit(uid, ok, backend=None, boxes=None, matched=0, total=0, error=None, timings=None):
+    obj: dict = {"ok": ok, "id": uid}
+    if ok:
+        obj.update(backend=backend, matched=matched, total=total, boxes=boxes or [])
+    else:
+        obj["error"] = error
+    if timings:
+        obj["t"] = timings
+    print(json.dumps(obj), flush=True)
+
+
+# --------------------------------------------------------------------------
+# Window and screenshot plumbing
+# --------------------------------------------------------------------------
+
+
+def _window_dict(win, monitors):
     x, y = win.get("at", [0, 0])
     w, h = win.get("size", [0, 0])
     if w <= 0 or h <= 0:
@@ -96,10 +109,34 @@ def focused_window() -> tuple[float, float, float, float, float] | None:
     for mon in monitors:
         if mon.get("id") == win.get("monitor"):
             scale = float(mon.get("scale") or 1.0)
-    return float(x), float(y), float(w), float(h), scale
+    return {"x": float(x), "y": float(y), "w": float(w), "h": float(h),
+            "scale": scale, "address": win.get("address")}
 
 
-def cursor_pos() -> tuple[float, float] | None:
+def focused_window():
+    try:
+        win = json.loads(run(["hyprctl", "activewindow", "-j"], timeout=5).stdout or "{}")
+        monitors = json.loads(run(["hyprctl", "monitors", "-j"], timeout=5).stdout or "[]")
+    except ValueError:
+        return None
+    if not win.get("address"):
+        return None
+    return _window_dict(win, monitors)
+
+
+def window_by_address(address):
+    try:
+        clients = json.loads(run(["hyprctl", "clients", "-j"], timeout=5).stdout or "[]")
+        monitors = json.loads(run(["hyprctl", "monitors", "-j"], timeout=5).stdout or "[]")
+    except ValueError:
+        return None
+    for win in clients:
+        if win.get("address") == address and win.get("mapped"):
+            return _window_dict(win, monitors)
+    return None
+
+
+def cursor_pos():
     """Layout position of the mouse cursor ("x, y" from hyprctl)."""
     try:
         parts = run(["hyprctl", "cursorpos"], timeout=5).stdout.decode().replace(",", " ").split()
@@ -116,6 +153,20 @@ def read_primary_selection(override: Path | None) -> str:
             return ""
     r = run(["wl-paste", "--primary", "--no-newline"], timeout=5)
     return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+
+
+def screenshot(window):
+    """The window region as an RGB array, via raw PPM (no codec time)."""
+    shot = Path(tempfile.mkstemp(suffix=".ppm", dir=RUNTIME if RUNTIME.exists() else None)[1])
+    try:
+        r = run(["grim", "-t", "ppm", "-g",
+                 f"{window['x']:.0f},{window['y']:.0f} {window['w']:.0f}x{window['h']:.0f}",
+                 str(shot)], timeout=15)
+        if r.returncode != 0:
+            return None
+        return load_pnm(shot)
+    finally:
+        shot.unlink(missing_ok=True)
 
 
 def load_pnm(image: Path):
@@ -165,6 +216,27 @@ def to_gray(arr):
     if arr.ndim == 2:
         return arr
     return (arr.sum(axis=2, dtype=np.uint16) // 3).astype(np.uint8)
+
+
+def to_layout(img_boxes, window):
+    """Image-pixel boxes to layout coordinates, dropping boxes whose center
+    left the window (scrolled out: their text is clipped away)."""
+    out = []
+    scale = window["scale"]
+    height = window["h"] * scale
+    width = window["w"] * scale
+    for b in img_boxes:
+        cx, cy = b["x"] + b["w"] / 2, b["y"] + b["h"] / 2
+        if not (0 <= cx <= width and 0 <= cy <= height):
+            continue
+        out.append({
+            "start": b["start"], "end": b["end"],
+            "x": round(window["x"] + b["x"] / scale, 1),
+            "y": round(window["y"] + b["y"] / scale, 1),
+            "w": round(b["w"] / scale, 1),
+            "h": round(b["h"] / scale, 1),
+        })
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -238,15 +310,15 @@ def fit_selection(mask, codes, window, line_runs, np):
         return None
     chars = [len(t) for t, *_ in lines]
     widths = [w for *_, w in lines]
-    if len(lines) >= 3 and len(set(chars)) >= 3:
+    if len(lines) >= 3 and len(set(chars)) >= 3 and len(set(widths)) >= 2:
         if float(np.corrcoef(chars, widths)[0, 1]) < 0.85:
             return None
     return {"lines": lines, "cell_w": cell_w, "score": -float(np.std(ratios))}
 
 
-def selection_boxes(rgb, sel_text, spoken, origin, scale):
-    """Boxes for the spoken words from the on-screen selection highlight,
-    or None when no credible highlight matches the selection's shape."""
+def selection_boxes(rgb, sel_text, spoken):
+    """Image-pixel boxes for the spoken words from the on-screen selection
+    highlight, or None when no credible highlight matches its shape."""
     import numpy as np
     if rgb is None or rgb.ndim != 3:
         return None
@@ -299,13 +371,9 @@ def selection_boxes(rgb, sel_text, spoken, origin, scale):
         for k in range(size):
             start, end, _ = spoken[a + k]
             _, x, y, w, h = sel_words[b + k]
-            boxes.append({
-                "start": start, "end": end,
-                "x": round(origin[0] + x / scale, 1),
-                "y": round(origin[1] + y / scale, 1),
-                "w": round(w / scale, 1),
-                "h": round(h / scale, 1),
-            })
+            boxes.append({"start": start, "end": end,
+                          "x": round(x, 1), "y": round(y, 1),
+                          "w": round(w, 1), "h": round(h, 1)})
     # The utterance is the prepared version of this very selection, so a
     # weak match means we fitted the wrong thing; let OCR decide instead.
     if len(boxes) < 0.75 * min(len(spoken), len(sel_words)):
@@ -324,7 +392,7 @@ def tess_language(lang: str) -> str:
     return tess_lang if tess_lang in langs.split() else "eng"
 
 
-def ocr_array(gray, base_y: int, tess_lang: str, stem: Path) -> list[tuple[str, float, float, float, float]]:
+def ocr_array(gray, base_y: int, tess_lang: str) -> list[tuple[str, float, float, float, float]]:
     """(normalized word, x, y, w, h) per OCR word in image pixels, y offset
     by base_y. A dense screen (a full terminal of text) is slow to OCR in
     one piece: tesseract's runtime grows with the number of text lines, and
@@ -342,7 +410,8 @@ def ocr_array(gray, base_y: int, tess_lang: str, stem: Path) -> list[tuple[str, 
     for i in range(bands):
         top = max(0, i * band_h - (overlap if i else 0))
         bottom = min(height, (i + 1) * band_h + (overlap if i < bands - 1 else 0))
-        src = stem.with_suffix(f".band{i}.pgm")
+        src = Path(tempfile.mkstemp(suffix=f".band{i}.pgm",
+                                    dir=RUNTIME if RUNTIME.exists() else None)[1])
         crops.append(src)
         chunk = gray[top:bottom]
         src.write_bytes(b"P5\n%d %d\n255\n" % (width, bottom - top) + chunk.tobytes())
@@ -381,10 +450,10 @@ def ocr_array(gray, base_y: int, tess_lang: str, stem: Path) -> list[tuple[str, 
     return words
 
 
-def align(spoken, ocr, origin, scale) -> list[dict]:
+def align(spoken, ocr) -> list[dict]:
     """Match the spoken word sequence to the OCR word sequence and return
-    layout-coordinate boxes keyed by the spoken char offsets, tagged with
-    the size of the matching block they came from."""
+    image-pixel boxes keyed by the spoken char offsets, tagged with the
+    size of the matching block they came from."""
     matcher = difflib.SequenceMatcher(
         a=[t[2] for t in spoken], b=[t[0] for t in ocr], autojunk=False)
     boxes = []
@@ -392,13 +461,9 @@ def align(spoken, ocr, origin, scale) -> list[dict]:
         for k in range(size):
             start, end, _ = spoken[a + k]
             _, left, top, width, height = ocr[b + k]
-            boxes.append({
-                "start": start, "end": end, "_block": size, "_i": a + k,
-                "x": round(origin[0] + left / scale, 1),
-                "y": round(origin[1] + top / scale, 1),
-                "w": round(width / scale, 1),
-                "h": round(height / scale, 1),
-            })
+            boxes.append({"start": start, "end": end, "_block": size, "_i": a + k,
+                          "x": round(left, 1), "y": round(top, 1),
+                          "w": round(width, 1), "h": round(height, 1)})
     return boxes
 
 
@@ -439,10 +504,182 @@ def strip_tags(boxes) -> list[dict]:
     return boxes
 
 
+# --------------------------------------------------------------------------
+# Acquisition and tracking
+# --------------------------------------------------------------------------
+
+
+def acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr, timings):
+    """One attempt to place the spoken words on this screenshot. Returns
+    (image boxes, backend) or (None, reason)."""
+    if sel_text.strip():
+        t0 = time.time()
+        found = selection_boxes(arr if arr.ndim == 3 else None, sel_text, spoken)
+        timings["sel"] = round(time.time() - t0, 2)
+        if found:
+            return found, "selection"
+    if not allow_ocr:
+        return None, "selection not on screen"
+    gray = to_gray(arr)
+    # Dark themes have light text on dark ground; tesseract reads those far
+    # better negated.
+    if gray.mean() < 128:
+        gray = 255 - gray
+    boxes = []
+    if cursor_img_y is not None:
+        y0 = int(max(0, cursor_img_y - CURSOR_BAND))
+        y1 = int(min(gray.shape[0], cursor_img_y + CURSOR_BAND))
+        if y1 - y0 >= 200 and y1 - y0 < gray.shape[0]:
+            t0 = time.time()
+            ocr = ocr_array(gray[y0:y1], y0, tess_lang)
+            boxes = drop_outliers(align(spoken, ocr))
+            timings["band"] = round(time.time() - t0, 2)
+            if len(boxes) < 0.85 * len(spoken):
+                boxes = []  # not (fully) near the cursor; scan it all
+    if not boxes:
+        t0 = time.time()
+        ocr = ocr_array(gray, 0, tess_lang)
+        timings["ocr"] = round(time.time() - t0, 2)
+        boxes = drop_outliers(align(spoken, ocr))
+    boxes = strip_tags(boxes)
+    # A partial match is fine (a long article is only partly on screen); a
+    # tiny one means the focused window shows different text.
+    if len(boxes) < 8 and len(boxes) / max(1, len(spoken)) < 0.5:
+        return None, f"text not on screen ({len(boxes)}/{len(spoken)} words matched)"
+    return boxes, "ocr"
+
+
+def signature(gray, np):
+    """A compact per-row fingerprint of the screen for scroll tracking."""
+    width = gray.shape[1]
+    cols = np.linspace(0, width - 1, SIG_COLS).astype(int)
+    return gray[:, cols].astype(np.int16)
+
+
+def find_shift(ref, sig, expected, np, radius=700):
+    """Where the reference strip sits in the new signature: its top row, or
+    None when there is no confident match."""
+    if float(np.std(ref)) < 5:
+        return None  # a near-blank strip matches anywhere
+    height, strip = sig.shape[0], ref.shape[0]
+    lo = max(0, int(expected) - radius)
+    hi = min(height - strip, int(expected) + radius)
+    if hi < lo:
+        return None
+
+    def sad(pos):
+        return float(np.mean(np.abs(sig[pos:pos + strip] - ref)))
+
+    coarse = [(sad(p), p) for p in range(lo, hi + 1, 3)]
+    coarse.sort()
+    best_s, best_p = coarse[0]
+    for p in range(max(lo, best_p - 3), min(hi, best_p + 3) + 1):
+        s = sad(p)
+        if s < best_s:
+            best_s, best_p = s, p
+    if best_s > 10.0:
+        return None
+    far = [s for s, p in coarse if abs(p - best_p) >= 12]
+    if far and min(far) < best_s * 1.35 + 1.0:
+        return None  # ambiguous: repeated content
+    return best_p
+
+
+def utterance_state(uid):
+    """True while the daemon is still speaking this very utterance."""
+    try:
+        cur = json.loads((RUNTIME / "utterance").read_text())
+        if cur.get("id") != uid:
+            return False
+    except (OSError, ValueError):
+        return False
+    try:
+        return (RUNTIME / "state").read_text().strip() == "speaking"
+    except OSError:
+        return False
+
+
+def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
+    """Keep the boxes honest for the rest of the utterance: track scrolling
+    by row signature, re-fit a moved selection, clear when the text leaves
+    the screen, and keep trying when nothing has been found yet."""
+    import numpy as np
+    ref = r0 = None
+    shown = bool(img_boxes)
+    ocr_budget = 2
+    tick = 0
+
+    def anchor(gray_now):
+        nonlocal ref, r0
+        if not img_boxes:
+            ref = None
+            return
+        top = int(max(0, min(b["y"] for b in img_boxes) - 40))
+        bottom = int(min(gray_now.shape[0], max(b["y"] + b["h"] for b in img_boxes) + 40))
+        sig = signature(gray_now, np)
+        ref, r0 = sig[top:bottom].copy(), top
+
+    anchor(to_gray(arr))
+    dy = 0.0
+
+    while utterance_state(uid):
+        time.sleep(TICK)
+        tick += 1
+        if not utterance_state(uid):
+            break
+        now = window_by_address(window["address"])
+        if now is None:
+            if shown:
+                emit(uid, False, error="window gone")
+            return
+        resized = abs(now["w"] - window["w"]) > 2 or abs(now["h"] - window["h"]) > 2
+        window = now
+        arr = screenshot(window)
+        if arr is None:
+            continue
+        gray = to_gray(arr)
+
+        moved = None
+        if ref is not None and not resized:
+            pos = find_shift(ref, signature(gray, np), r0 + dy, np)
+            if pos is not None:
+                moved = pos - r0
+
+        if moved is not None:
+            if abs(moved - dy) > 1 or tick == 1:
+                dy = float(moved)
+                shifted = [{**b, "y": b["y"] + dy} for b in img_boxes]
+                emit(uid, True, backend=backend, boxes=to_layout(shifted, window),
+                     matched=len(shifted), total=len(spoken))
+                shown = True
+            continue
+
+        # Track lost (scrolled far, content changed, window resized) or
+        # nothing acquired yet: try to re-acquire. The selection detector is
+        # cheap and runs every tick; OCR is rationed.
+        timings: dict = {}
+        allow_ocr = ocr_budget > 0 and tick % 4 == 2
+        boxes, got = acquire(arr, spoken, sel_text, tess_lang, None, allow_ocr, timings)
+        if allow_ocr and "ocr" in timings:
+            ocr_budget -= 1
+        if boxes:
+            img_boxes = boxes
+            backend = got
+            dy = 0.0
+            anchor(gray)
+            emit(uid, True, backend=backend, boxes=to_layout(img_boxes, window),
+                 matched=len(img_boxes), total=len(spoken), timings=timings)
+            shown = True
+        elif shown:
+            emit(uid, False, error="tracking lost")
+            shown = False
+
+
 def main() -> int:
     args = sys.argv[1:]
     image = origin = sel_override = None
     scale = 1.0
+    following = False
     while args:
         arg = args.pop(0)
         if arg == "--image" and args:
@@ -453,6 +690,8 @@ def main() -> int:
             scale = float(args.pop(0))
         elif arg == "--selection" and args:
             sel_override = Path(args.pop(0))
+        elif arg == "--follow":
+            following = True
         elif arg in ("-h", "--help"):
             print(__doc__)
             return 0
@@ -460,100 +699,76 @@ def main() -> int:
     try:
         utterance = json.loads((RUNTIME / "utterance").read_text())
     except (OSError, ValueError):
-        return fail("no current utterance")
+        emit(None, False, error="no current utterance")
+        return 0
+    uid = utterance.get("id")
     text = str(utterance.get("text") or "")
     lang = str(utterance.get("lang") or "en")
     if not text:
-        return fail("empty utterance")
+        emit(uid, False, error="empty utterance")
+        return 0
     spoken = [(m.start(), m.end(), norm(m.group()))
               for m in re.finditer(r"\S+", text)]
     spoken = [t for t in spoken if t[2]]
     if not spoken:
-        return fail("nothing to match")
+        emit(uid, False, error="nothing to match")
+        return 0
 
     timings: dict = {}
-    cursor = None
-    shot = None
-    t0 = time.time()
-    if image is None:
-        window = focused_window()
-        timings["window"] = round(time.time() - t0, 2)
-        if window is None:
-            return fail("no focused window")
-        x, y, w, h, scale = window
-        origin = (x, y)
-        cursor = cursor_pos()
-        # PPM: no PNG encode in grim, no decode here; numpy reads it raw.
-        shot = Path(tempfile.mkstemp(suffix=".ppm", dir=RUNTIME if RUNTIME.exists() else None)[1])
-        t0 = time.time()
-        r = run(["grim", "-t", "ppm", "-g", f"{x:.0f},{y:.0f} {w:.0f}x{h:.0f}", str(shot)], timeout=15)
-        timings["shot"] = round(time.time() - t0, 2)
-        if r.returncode != 0:
-            shot.unlink(missing_ok=True)
-            return fail("screenshot failed")
-        image = shot
-    else:
-        origin = origin or (0.0, 0.0)
+    sel_text = read_primary_selection(sel_override)
+    tess_lang = tess_language(lang)
 
-    try:
+    if image is not None:
+        # Test mode: one shot against a fixed image, no follow.
+        arr = None
         try:
             arr = load_pnm(image)
         except ImportError:
-            return fail("numpy is not available to /usr/bin/python3")
-        if arr is None or arr.size == 0:
-            return fail("could not read the screenshot")
+            pass
+        if arr is None:
+            emit(uid, False, error="could not read the screenshot")
+            return 0
+        origin = origin or (0.0, 0.0)
+        window = {"x": origin[0], "y": origin[1], "scale": scale,
+                  "w": arr.shape[1] / scale, "h": arr.shape[0] / scale, "address": None}
+        boxes, backend = acquire(arr, spoken, sel_text, tess_lang, None, True, timings)
+        if boxes:
+            emit(uid, True, backend=backend, boxes=to_layout(boxes, window),
+                 matched=len(boxes), total=len(spoken), timings=timings)
+        else:
+            emit(uid, False, error=backend, timings=timings)
+        return 0
 
-        backend = "ocr"
+    t0 = time.time()
+    window = focused_window()
+    timings["window"] = round(time.time() - t0, 2)
+    if window is None:
+        emit(uid, False, error="no focused window")
+        return 0
+    cursor = cursor_pos()
+    cursor_img_y = None
+    if cursor is not None and window["y"] <= cursor[1] <= window["y"] + window["h"]:
+        cursor_img_y = (cursor[1] - window["y"]) * window["scale"]
+    t0 = time.time()
+    arr = screenshot(window)
+    timings["shot"] = round(time.time() - t0, 2)
+    if arr is None:
+        emit(uid, False, error="screenshot failed")
+        return 0
+    try:
+        boxes, backend = acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, True, timings)
+    except ImportError:
+        emit(uid, False, error="numpy is not available to /usr/bin/python3")
+        return 0
+    if boxes:
+        emit(uid, True, backend=backend, boxes=to_layout(boxes, window),
+             matched=len(boxes), total=len(spoken), timings=timings)
+    else:
+        emit(uid, False, error=backend, timings=timings)
+        backend = None
         boxes = []
-        sel_text = read_primary_selection(sel_override)
-        if sel_text.strip():
-            t0 = time.time()
-            found = selection_boxes(arr if arr.ndim == 3 else None, sel_text,
-                                    spoken, origin, scale)
-            timings["sel"] = round(time.time() - t0, 2)
-            if found:
-                boxes = found
-                backend = "selection"
-
-        if not boxes:
-            gray = to_gray(arr)
-            # Dark themes have light text on dark ground; tesseract reads
-            # those far better negated.
-            if gray.mean() < 128:
-                gray = 255 - gray
-            tess_lang = tess_language(lang)
-            # Fast path: the selection was usually just made with the mouse,
-            # so look in a band around the cursor first; a fraction of the
-            # OCR work when the window is a full screen of text.
-            if cursor is not None and origin[1] <= cursor[1] <= origin[1] + gray.shape[0] / scale:
-                y0 = int(max(0.0, (cursor[1] - origin[1] - CURSOR_BAND) * scale))
-                y1 = int(min(gray.shape[0], (cursor[1] - origin[1] + CURSOR_BAND) * scale))
-                if y1 - y0 >= 200 and y1 - y0 < gray.shape[0]:
-                    t0 = time.time()
-                    ocr = ocr_array(gray[y0:y1], y0, tess_lang, image)
-                    boxes = drop_outliers(align(spoken, ocr, origin, scale))
-                    timings["band"] = round(time.time() - t0, 2)
-                    if len(boxes) < 0.85 * len(spoken):
-                        boxes = []  # not (fully) near the cursor; scan it all
-            if not boxes:
-                t0 = time.time()
-                ocr = ocr_array(gray, 0, tess_lang, image)
-                timings["ocr"] = round(time.time() - t0, 2)
-                if not ocr:
-                    return fail("no readable text on screen")
-                boxes = drop_outliers(align(spoken, ocr, origin, scale))
-            boxes = strip_tags(boxes)
-    finally:
-        if shot is not None:
-            shot.unlink(missing_ok=True)
-
-    # A partial match is fine (a long article is only partly on screen); a
-    # tiny one means the focused window shows different text.
-    if len(boxes) < 8 and len(boxes) / len(spoken) < 0.5:
-        return fail(f"text not on screen ({len(boxes)}/{len(spoken)} words matched)")
-    print(json.dumps({"ok": True, "id": utterance.get("id"), "backend": backend,
-                      "t": timings, "matched": len(boxes), "total": len(spoken),
-                      "boxes": boxes}))
+    if following:
+        follow(uid, window, arr, spoken, sel_text, tess_lang, boxes, backend)
     return 0
 
 

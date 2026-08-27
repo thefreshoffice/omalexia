@@ -238,17 +238,32 @@ at a real-time factor of 0.05, so speed is not the problem quality has.
       pixel-exact in ~0.5 s with no OCR; OCR (banded, single-threaded
       workers, cursor-band fast pass, geometric outlier filter) remains the
       fallback for clipboard and screen reads. Follow-ups, in value order:
-      - [ ] Re-locate when the text moves: a scroll or window move mid-read
-            leaves the boxes behind. Cheap version: re-check the window
-            geometry at each sentence and re-OCR when it changed; scrolling
-            inside the window stays invisible to us, so also consider a
-            periodic re-OCR of one text line as a drift detector.
+      - [x] Re-locate when the text moves (shipped 2026-08-27, after
+            researching how macOS does it: Spoken Content re-queries the
+            app's accessibility geometry, kAXBoundsForRange, while it
+            speaks). `omalexia-locate --follow` re-captures the window
+            about once a second for the whole utterance, re-finds the
+            tracked text by row-signature correlation (scroll and window
+            moves shift the boxes), re-fits a moved selection exactly,
+            hides the marker when the text leaves the screen, and rations
+            re-OCR. Verified live: a foot terminal scrolling twelve rows
+            mid-read kept the marker on the spoken word.
       - [ ] The "Screen" (region OCR) reading flow already runs tesseract to
             get its text; keep those word boxes instead of re-locating, and
             the marker there becomes exact for free.
-      - [ ] AT-SPI as a precision upgrade where it exists (Firefox, GTK):
-            character extents instead of OCR, no scroll staleness. Keep OCR
-            as the universal fallback.
+      - [ ] AT-SPI as a precision upgrade where it exists: this is exactly
+            the macOS mechanism (bounds-for-range on the accessibility
+            tree). Findings from the 2026-08-27 spike on the laptop: the
+            AT-SPI stack runs (registry + bus), gi.repository.Atspi works
+            on /usr/bin/python3, `Text.get_range_extents` with WINDOW
+            coordinates plus the hyprctl window origin is the API to use.
+            But foot has no accessibility tree at all, and Chromium only
+            builds its tree for a persistent registered AT client (or
+            launched with a11y forced): the runtime ScreenReaderEnabled
+            flag alone did not materialize it. So this needs a small
+            long-lived a11y client (or install-time browser flags) and
+            only pays off in browsers and GTK/Qt apps; the selection and
+            signature tracking already cover the terminals.
       - [ ] If the phoneme-weighted timing ever feels off inside long
             sentences, forced alignment (Vosk small) on the synthesized
             audio during the write-ahead is the exact fix.

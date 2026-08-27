@@ -601,7 +601,7 @@ class Daemon:
         self.current: dict = {}
         self.utterance_id = 0
         self.done = threading.Condition()
-        self.watchers: list[socket.socket] = []
+        self.watchers: list[tuple[socket.socket, bool]] = []  # (conn, wants boxes)
         self.watch_lock = threading.Lock()
         self.set_state("idle")
 
@@ -631,13 +631,13 @@ class Daemon:
             return
         data = (json.dumps(event) + "\n").encode()
         with self.watch_lock:
-            for conn in self.watchers[:]:
+            for entry in self.watchers[:]:
                 try:
-                    conn.sendall(data)
+                    entry[0].sendall(data)
                 except Exception:  # noqa: BLE001
-                    self.watchers.remove(conn)
+                    self.watchers.remove(entry)
                     try:
-                        conn.close()
+                        entry[0].close()
                     except Exception:  # noqa: BLE001
                         pass
 
@@ -789,44 +789,51 @@ class Daemon:
             thread.start()
         if old is not None and old.is_alive():
             old.join(timeout=2)
-        # With a watcher on the line, find the words on screen while the
-        # first sentence synthesizes; the boxes event usually beats the
-        # first word event.
-        if self.watchers:
+        # With a box watcher on the line, find the words on screen while
+        # the first sentence synthesizes and keep following them for the
+        # whole utterance (scrolling, window moves).
+        if any(wants for _, wants in self.watchers):
             threading.Thread(target=self._locate, args=(uid, cancel), daemon=True).start()
         return {"ok": True, "id": uid, "lang": lang, "engine": engine.name, "chars": len(text)}
 
     LOCATE_TOOL = HOME / ".local" / "bin" / "omalexia-locate"
 
     def _locate(self, uid: int, cancel: threading.Event):
-        """Run omalexia-locate (OCR of the focused window) once per
-        utterance and broadcast the word boxes to every watcher. One retry:
-        the first attempt can race a window that is still painting."""
+        """Stream on-screen word boxes from `omalexia-locate --follow`: an
+        initial fix, then an update whenever the text moves or is lost from
+        view. The tool watches the utterance and state files and exits by
+        itself when this utterance is over."""
         tool = str(self.LOCATE_TOOL) if self.LOCATE_TOOL.exists() else "omalexia-locate"
-        for attempt in (1, 2):
-            if cancel.is_set() or self.utterance_id != uid:
-                return
-            t0 = time.time()
-            try:
-                r = subprocess.run([tool], capture_output=True, timeout=30)
-                reply = json.loads(r.stdout.decode("utf-8", "replace") or "{}")
-            except Exception as exc:  # noqa: BLE001
-                log(f"locate: {exc}")
-                return
-            log(f"locate attempt {attempt}: {time.time() - t0:.2f}s, "
-                f"ok={reply.get('ok')} {reply.get('backend') or ''} {reply.get('error') or ''}"
-                f"{reply.get('matched') if reply.get('ok') else ''} {reply.get('t') or ''}")
-            if reply.get("ok") and reply.get("id") == uid:
-                event = {"event": "boxes", "id": uid,
-                         "matched": reply.get("matched"), "total": reply.get("total"),
-                         "boxes": reply.get("boxes") or []}
+        try:
+            proc = subprocess.Popen([tool, "--follow"], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
+        except Exception as exc:  # noqa: BLE001
+            log(f"locate: {exc}")
+            return
+        try:
+            for raw in proc.stdout:
+                if cancel.is_set() or self.utterance_id != uid:
+                    break
+                try:
+                    reply = json.loads(raw.decode("utf-8", "replace"))
+                except ValueError:
+                    continue
+                if reply.get("id") != uid:
+                    continue
+                boxes = (reply.get("boxes") or []) if reply.get("ok") else []
+                event = {"event": "boxes", "id": uid, "matched": reply.get("matched"),
+                         "total": reply.get("total"), "boxes": boxes}
                 with self.lock:
                     if self.utterance_id == uid:
                         self.current["boxes"] = event
                 self.emit(event)
-                return
-            log(f"locate attempt {attempt}: {reply.get('error') or 'utterance changed'}")
-            cancel.wait(2.0)
+                log(f"locate: {reply.get('backend') or reply.get('error') or '?'}, "
+                    f"{len(boxes)} boxes {reply.get('t') or ''}")
+        finally:
+            try:
+                proc.terminate()
+            except Exception:  # noqa: BLE001
+                pass
 
     def _run(self, engine, text: str, speed: float | None, cancel: threading.Event, uid: int):
         player = None
@@ -1029,8 +1036,11 @@ class Daemon:
                 self.send(conn, {"ok": True, **self.status()})
             elif cmd == "watch":
                 conn.settimeout(1.0)
+                # A bar-mode client needs the word timing but no on-screen
+                # boxes; with no box watcher the locate work is skipped.
+                entry = (conn, req.get("boxes", True) is not False)
                 with self.watch_lock:
-                    self.watchers.append(conn)
+                    self.watchers.append(entry)
                 self.send(conn, {"ok": True, "event": "hello", **self.status()})
                 # A watcher joining mid-utterance still gets the boxes.
                 with self.lock:
@@ -1051,8 +1061,8 @@ class Daemon:
                             break
                 finally:
                     with self.watch_lock:
-                        if conn in self.watchers:
-                            self.watchers.remove(conn)
+                        if entry in self.watchers:
+                            self.watchers.remove(entry)
             else:
                 self.send(conn, {"ok": False, "error": f"unknown command: {cmd}"})
 

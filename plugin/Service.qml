@@ -278,6 +278,10 @@ Item {
 
   onHighlightEnabledChanged: syncWatch()
   onDaemonActiveChanged: syncWatch()
+  onHighlightModeChanged: {
+    // The boxes flag is stated when connecting; a mode switch reconnects.
+    if (speakWatch.connected) { speakWatch.connected = false; syncWatch() }
+  }
 
   Socket {
     id: speakWatch
@@ -285,9 +289,16 @@ Item {
     parser: SplitParser {
       onRead: function(line) { root.handleSpeakEvent(String(line)) }
     }
+    onError: function(err) { console.warn("omalexia speakWatch error:", err) }
     onConnectionStateChanged: {
-      if (connected) { write("{\"cmd\": \"watch\"}\n"); flush() }
-      else root.clearHighlight()
+      if (connected) {
+        // Bar mode still needs the word timing but no on-screen boxes;
+        // saying so lets the daemon skip the locate work entirely.
+        write("{\"cmd\": \"watch\", \"boxes\": " + (root.highlightMode === "text") + "}\n")
+        flush()
+      } else {
+        root.clearHighlight()
+      }
     }
   }
 

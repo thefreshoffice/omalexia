@@ -215,6 +215,9 @@ def read_aloud_status() -> dict:
         ],
         "kokoroInstalled": kokoro,
         "highlightMode": highlight_mode(),
+        "highlightDelay": round(float(live.get("highlightDelay")
+                                      or read_text(OMALEXIA_STATE / "highlight-delay")
+                                      or 0.15), 2),
         "piperAvailable": (piper_probe := run(["/usr/bin/python3", "-c", "import piper"], timeout=8)) is not None
         and piper_probe.returncode == 0,
     }
@@ -373,6 +376,13 @@ def set_value(key: str, value: str) -> None:
     elif key == "daemon":
         action = "start" if value == "true" else "stop"
         run(["systemctl", "--user", action, "omalexia-speakd.service"], timeout=15)
+    elif key == "highlightDelay":
+        # How long the marker waits for the audio the listener actually
+        # hears; wireless headphones need more. Applied live by the daemon.
+        delay = max(-0.3, min(1.5, float(value)))
+        speakd_request({"cmd": "set", "highlight_delay": delay})
+        OMALEXIA_STATE.mkdir(parents=True, exist_ok=True)
+        (OMALEXIA_STATE / "highlight-delay").write_text(f"{delay:.2f}\n")
     elif key == "highlight":
         # The plugin holds the daemon's watch connection only while a
         # highlight mode is on, so "off" also stops the timing work.

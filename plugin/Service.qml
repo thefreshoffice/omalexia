@@ -103,12 +103,14 @@ Item {
     function clone(o) { return JSON.parse(JSON.stringify(o || ({}))) }
     var truthy = value === "true"
     if (key === "speed" || key === "language" || key === "daemon" || key === "highlight"
+        || key === "highlightDelay"
         || key.indexOf("voice:") === 0 || key.indexOf("engine:") === 0) {
       var r = clone(read)
       if (key === "speed") r.speed = Number(value)
       else if (key === "language") r.language = value
       else if (key === "daemon") r.daemonActive = truthy
       else if (key === "highlight") r.highlightMode = value
+      else if (key === "highlightDelay") r.highlightDelay = Number(value)
       else {
         var isEngine = key.indexOf("engine:") === 0
         var code = key.substring(isEngine ? 7 : 6)
@@ -315,7 +317,9 @@ Item {
 
   function syncWatch() {
     var want = highlightEnabled && daemonActive
-    if (want !== speakWatch.connected) speakWatch.connected = want
+    if (want === speakWatch.connected) return
+    if (want) console.log("omalexia: reconnecting speakd watch")
+    speakWatch.connected = want
   }
 
   onHighlightEnabledChanged: syncWatch()
@@ -345,11 +349,13 @@ Item {
   }
 
   Timer {
-    // Retry while the watch should be up but is not (daemon just started,
-    // daemon restarted underneath us).
+    // Heartbeat, deliberately not gated on speakWatch.connected: a socket
+    // whose peer went away can flip that property without a change signal,
+    // which would leave a condition-gated timer disarmed forever. Checking
+    // is idempotent and costs nothing.
     interval: 4000
     repeat: true
-    running: root.highlightEnabled && root.daemonActive && !speakWatch.connected
+    running: root.highlightEnabled && root.daemonActive
     onTriggered: root.syncWatch()
   }
 

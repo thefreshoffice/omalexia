@@ -36,8 +36,10 @@ import queue
 import re
 import signal
 import socket
+import struct
 import subprocess
 import sys
+import termios
 import threading
 import time
 import tomllib
@@ -57,6 +59,11 @@ DEFAULT_CONFIG = {
     "tts": {
         "speed": 1.0,
         "default_language": "auto",
+        # How far the audio a listener HEARS trails the audio handed to the
+        # sink: pw-play holdback plus device buffering. Wireless headphones
+        # add their radio link on top; the panel's marker-timing slider
+        # tunes this by ear.
+        "highlight_delay": 0.15,
         "voices": {"en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium"},
         "engines": {},
         "kokoro": {"voice": "af_heart"},
@@ -82,19 +89,20 @@ def load_config() -> dict:
             log(f"config: ignoring unreadable {CONFIG_PATH}: {exc}")
             user = {}
         tts = user.get("tts", {})
-        for key in ("speed", "default_language"):
+        for key in ("speed", "default_language", "highlight_delay"):
             if key in tts:
                 cfg["tts"][key] = tts[key]
         for key in ("voices", "engines", "kokoro"):
             if isinstance(tts.get(key), dict):
                 cfg["tts"][key].update(tts[key])
-    # A runtime speed override (set via `omalexia say speed`) beats the file.
-    speed_file = STATE_HOME / "speed"
-    if speed_file.exists():
-        try:
-            cfg["tts"]["speed"] = float(speed_file.read_text().strip())
-        except ValueError:
-            pass
+    # Runtime overrides (set from the bar panel) beat the file.
+    for key, name in (("speed", "speed"), ("highlight_delay", "highlight-delay")):
+        state_file = STATE_HOME / name
+        if state_file.exists():
+            try:
+                cfg["tts"][key] = float(state_file.read_text().strip())
+            except ValueError:
+                pass
     return cfg
 
 
@@ -544,6 +552,8 @@ class KokoroEngine:
 
 class Player:
     def __init__(self, rate: int):
+        self.rate = rate
+        self.written = 0
         self.proc = subprocess.Popen(
             ["pw-play", "--raw", "--format", "s16", "--rate", str(rate), "--channels", "1",
              "--media-role", "Accessibility", "-"],
@@ -563,9 +573,22 @@ class Player:
         try:
             self.proc.stdin.write(data)
             self.proc.stdin.flush()
+            self.written += len(data)
             return True
         except (BrokenPipeError, ValueError):
             return False
+
+    def consumed_seconds(self) -> float | None:
+        """Seconds of audio pw-play has actually taken from the pipe: the
+        closed-loop half of the highlight clock. If playback ever stalls,
+        this stalls with it, and the word events wait instead of drifting
+        ahead of the voice."""
+        try:
+            raw = fcntl.ioctl(self.proc.stdin.fileno(), termios.FIONREAD, b"\x00\x00\x00\x00")
+            pending = struct.unpack("i", raw)[0]
+        except (OSError, struct.error, ValueError):
+            return None
+        return (self.written - pending) / 2 / self.rate
 
     def finish(self):
         try:
@@ -619,6 +642,7 @@ class Daemon:
         return {
             "state": "speaking" if speaking else "idle",
             "speed": self.config["tts"]["speed"],
+            "highlightDelay": self.config["tts"].get("highlight_delay", 0.15),
             "voices": self.config["tts"]["voices"],
             "engines": {lang: getattr(e, "name", "?") for lang, e in self.engines.items()},
             "text": self.current.get("text", "")[:120] if speaking else "",
@@ -870,7 +894,12 @@ class Daemon:
 
             # Highlight events ride the same clock as the audio: each event
             # is stamped with its playback time when the sentence is queued,
-            # and this thread emits it to the watchers at that moment.
+            # and this thread emits it at that moment. The moment is judged
+            # twice: by wall time since the first write AND by how much
+            # audio pw-play has actually consumed, so a playback stall holds
+            # the events back instead of letting them run ahead. On top sits
+            # the configurable highlight delay: the lag between audio handed
+            # to the sink and audio heard (wireless headphones add plenty).
             def emit_due():
                 while True:
                     item = events.get()
@@ -881,11 +910,18 @@ class Daemon:
                         if cancel.is_set() or emitter_stop.is_set():
                             return
                         cancel.wait(0.05)
+                    delay = float(self.config["tts"].get("highlight_delay", 0.15))
+                    target = max(0.0, at + max(-0.3, min(1.5, delay)))
                     while not cancel.is_set() and not emitter_stop.is_set():
-                        delay = clock["start"] + at - time.monotonic()
-                        if delay <= 0:
-                            break
-                        cancel.wait(min(delay, 0.2))
+                        wall_gap = clock["start"] + target - time.monotonic()
+                        if wall_gap > 0:
+                            cancel.wait(min(wall_gap, 0.2))
+                            continue
+                        played = player.consumed_seconds()
+                        if played is not None and played < min(at, queued):
+                            cancel.wait(min(max((at - played) * 0.5, 0.02), 0.2))
+                            continue
+                        break
                     if cancel.is_set() or emitter_stop.is_set():
                         return
                     self.emit(event)
@@ -936,11 +972,18 @@ class Daemon:
                 # Let the playback clock catch up before closing the sink so
                 # the emitter delivers the tail events; pw-play plays out its
                 # buffered audio during this wait, so nothing gets longer.
+                # The consumption check extends the wait over any stall, with
+                # a hard cap in case the sink died silently.
+                patience = time.monotonic() + queued + 10
                 while clock["start"] is not None and not cancel.is_set():
                     remaining = clock["start"] + queued - time.monotonic()
-                    if remaining <= 0:
+                    if remaining > 0:
+                        cancel.wait(min(remaining, 0.2))
+                        continue
+                    played = player.consumed_seconds()
+                    if played is None or played >= queued or time.monotonic() > patience:
                         break
-                    cancel.wait(min(remaining, 0.2))
+                    cancel.wait(0.1)
             if not cancel.is_set():
                 player.finish()
         except Exception as exc:  # noqa: BLE001
@@ -1030,6 +1073,13 @@ class Daemon:
                     self.config["tts"]["speed"] = speed
                     STATE_HOME.mkdir(parents=True, exist_ok=True)
                     (STATE_HOME / "speed").write_text(f"{speed:.2f}\n")
+                if "highlight_delay" in req:
+                    # Applied live, mid-utterance: the emitter reads it per
+                    # event, so the user can tune sync by ear while reading.
+                    delay = max(-0.3, min(1.5, float(req["highlight_delay"])))
+                    self.config["tts"]["highlight_delay"] = delay
+                    STATE_HOME.mkdir(parents=True, exist_ok=True)
+                    (STATE_HOME / "highlight-delay").write_text(f"{delay:.2f}\n")
                 self.send(conn, {"ok": True, **self.status()})
             elif cmd == "reload":
                 self.reload()

@@ -127,7 +127,13 @@ the sentence being read gets a faint steady wash with the word pill
 riding on top, missed words are interpolated between their neighbours
 instead of blinking the marker off, every text line gets one uniform
 rail height so the pill does not bounce with letter shapes, and the pill
-fades and glides rather than popping. The panel's "Highlight words" setting
+fades and glides rather than popping. Word timing is closed-loop: each
+event waits for the audio actually taken by the player (measured off the
+playback pipe), so a stalled or slow output holds the marker back
+instead of letting it run ahead. The panel's "Marker timing" slider adds
+the one thing software cannot see, the lag of the listening device;
+wireless headphones typically want a few tenths of a second more, tuned
+by ear while reading (it applies live). The panel's "Highlight words" setting
 switches between marking the text, a subtitle bar at the bottom of the
 screen showing the sentence with the spoken word in a pill, or off. Pairs
 best with reading mode, which keeps the window still.

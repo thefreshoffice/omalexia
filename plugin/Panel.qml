@@ -49,7 +49,9 @@ Panel {
     keys.push("read.actions", "read.speed")
     var voiceLangs = read.languages || []
     for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
-    keys.push("read.language", "read.highlight", "read.test")
+    keys.push("read.language", "read.highlight")
+    if (String(read.highlightMode || "text") !== "off") keys.push("read.timing")
+    keys.push("read.test")
     if (showDictation) {
       if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback", "dict.showTyped")
       else keys.push("dict.install")
@@ -117,6 +119,9 @@ Panel {
       omalexia.set("language", cycleOption(languageOptions, read.language, dx))
     } else if (key === "read.highlight") {
       omalexia.set("highlight", cycleOption(highlightOptions, read.highlightMode || "text", dx))
+    } else if (key === "read.timing") {
+      var delay = Math.max(-0.3, Math.min(1.5, Number(read.highlightDelay || 0.15) + dx * 0.05))
+      omalexia.set("highlightDelay", delay.toFixed(2))
     } else if (key === "dict.engine") {
       omalexia.set("dictationEngine", cycleOption(engineOptions, dictation.engine, dx))
     } else if (key === "look.font") {
@@ -496,6 +501,23 @@ Panel {
               options: root.highlightOptions
               current: String(root.read.highlightMode || "text")
               onChosen: function(v) { omalexia.set("highlight", v) }
+            }
+
+            // Sync knob for what the ear actually hears: wireless
+            // headphones lag the marker by their radio link; sliding this
+            // up delays the marker to match. Applies live while reading.
+            SliderRow {
+              visible: String(root.read.highlightMode || "text") !== "off"
+              rowKey: "read.timing"
+              label: "Marker timing"
+              tickValues: [0]
+              valueText: (Number(root.read.highlightDelay || 0) >= 0 ? "+" : "")
+                         + Number(root.read.highlightDelay || 0).toFixed(2) + " s"
+              value: Number(root.read.highlightDelay === undefined ? 0.15 : root.read.highlightDelay)
+              minimum: -0.3
+              maximum: 1.5
+              step: 0.05
+              onCommitted: function(v) { omalexia.set("highlightDelay", v.toFixed(2)) }
             }
 
             ActionRow {

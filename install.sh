@@ -81,6 +81,21 @@ note "installed $(find bin -maxdepth 1 -type f -printf '%f ')to ~/.local/bin"
 [[ -f $CONFIG_DIR/config.toml ]] || install -m 644 config/omalexia.toml "$CONFIG_DIR/config.toml"
 [[ -f $CONFIG_DIR/replacements.txt ]] || install -m 644 config/replacements.txt "$CONFIG_DIR/replacements.txt"
 
+# foot: let read-aloud ask the terminal for its visible text, which gives
+# the highlighter exact word positions with no OCR. The chord is untypeable
+# on purpose; omalexia-locate presses it via wtype. New terminals only:
+# foot reads its config at startup.
+foot_ini="${XDG_CONFIG_HOME:-$HOME/.config}/foot/foot.ini"
+if [[ -f $foot_ini ]] && ! grep -q omalexia-foot-visible "$foot_ini"; then
+  cp "$foot_ini" "$foot_ini.bak.$stamp"
+  if grep -q '^\[key-bindings\]' "$foot_ini"; then
+    sed -i '/^\[key-bindings\]/a pipe-visible=[omalexia-foot-visible] Control+Shift+F34' "$foot_ini"
+  else
+    printf '\n[key-bindings]\npipe-visible=[omalexia-foot-visible] Control+Shift+F34\n' >>"$foot_ini"
+  fi
+  note "added the foot pipe-visible binding (applies to new terminals)"
+fi
+
 # ---------------------------------------------------------------------------
 say "Omalexia: bar plugin"
 # ---------------------------------------------------------------------------

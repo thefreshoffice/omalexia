@@ -109,7 +109,13 @@ spoken is marked right in the text on screen: the daemon knows the exact
 duration of every sentence before playing it, divides it over the words by
 phoneme count (espeak-ng), and streams word events on the playback clock;
 `omalexia-locate` finds the words on screen once per reading, so a
-translucent marker glides across the actual words. When the reading came
+translucent marker glides across the actual words. In a foot terminal it
+does not even look at pixels: the installer binds an untypeable chord to
+foot's pipe-visible, the locator presses it, and the terminal hands over
+its exact visible text; with the tty's rows and columns every word
+position is plain cell arithmetic, refreshed live while the terminal
+streams (about 80 ms per check). New terminals only; foot reads its
+configuration at startup. When the reading came
 from a visible selection, the highlight itself marks the text: the
 highlighted rows are detected by colour (a themed selection colour or
 foot-style inverted fg/bg alike) and the selected text is fitted onto them

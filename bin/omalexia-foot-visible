@@ -1,0 +1,9 @@
+#!/bin/bash
+# Receives the visible text of a foot window (wired to foot's pipe-visible
+# key binding) and parks it where omalexia-locate looks. Written atomically
+# so a reader never sees a half-written file.
+dir="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/omalexia"
+mkdir -p "$dir"
+tmp="$dir/.visible-text.$$"
+cat > "$tmp"
+mv -f "$tmp" "$dir/visible-text"

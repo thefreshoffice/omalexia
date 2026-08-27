@@ -110,7 +110,7 @@ def _window_dict(win, monitors):
         if mon.get("id") == win.get("monitor"):
             scale = float(mon.get("scale") or 1.0)
     return {"x": float(x), "y": float(y), "w": float(w), "h": float(h),
-            "scale": scale, "address": win.get("address")}
+            "scale": scale, "address": win.get("address"), "pid": win.get("pid")}
 
 
 def focused_window():
@@ -122,6 +122,14 @@ def focused_window():
     if not win.get("address"):
         return None
     return _window_dict(win, monitors)
+
+
+def window_focused(address) -> bool:
+    try:
+        win = json.loads(run(["hyprctl", "activewindow", "-j"], timeout=5).stdout or "{}")
+    except ValueError:
+        return False
+    return bool(address) and win.get("address") == address
 
 
 def window_by_address(address):
@@ -244,6 +252,102 @@ def to_layout(img_boxes, window):
             "h": round(b["h"] / scale, 1),
         })
     return out
+
+
+# --------------------------------------------------------------------------
+# Backend 0: the terminal's own text (foot pipe-visible)
+# --------------------------------------------------------------------------
+
+# foot can pipe the visible text to a command on a key press; the installer
+# binds an untypeable chord to omalexia-foot-visible, and wtype presses it.
+# That yields the terminal's exact text with line structure in ~50 ms, and
+# with the tty's rows x cols the position of every character is plain cell
+# arithmetic: no OCR, no pixel heuristics, fresh on every check even while
+# the terminal is streaming.
+
+FOOT_KEY = ["wtype", "-M", "ctrl", "-M", "shift", "-k", "F34", "-m", "shift", "-m", "ctrl"]
+
+
+def foot_pad():
+    try:
+        text = (Path.home() / ".config" / "foot" / "foot.ini").read_text()
+        m = re.search(r"^\s*pad\s*=\s*(\d+)x(\d+)", text, re.M)
+        if m:
+            return float(m.group(1)), float(m.group(2))
+    except OSError:
+        pass
+    return 0.0, 0.0
+
+
+def foot_grid_words(window):
+    """(norm, x, y, w, h) image-pixel words of a foot window's visible text,
+    or None when this is not a foot window or the binding is missing."""
+    pid = window.get("pid")
+    if not pid:
+        return None
+    try:
+        comm = Path(f"/proc/{pid}/comm").read_text().strip()
+    except OSError:
+        return None
+    if comm not in ("foot", "footclient"):
+        return None
+    tty = None
+    out = run(["ps", "-o", "tty=", "--ppid", str(pid)], timeout=5).stdout.decode()
+    for candidate in out.split():
+        if candidate.startswith("pts/"):
+            tty = candidate
+            break
+    if tty is None:
+        return None
+    try:
+        rows, cols = (int(v) for v in
+                      run(["stty", "size", "-F", f"/dev/{tty}"], timeout=5).stdout.split())
+    except ValueError:
+        return None
+    if rows < 2 or cols < 10:
+        return None
+
+    visible = RUNTIME / "visible-text"
+    try:
+        before = visible.stat().st_mtime_ns
+    except OSError:
+        before = -1
+    if run(FOOT_KEY, timeout=5).returncode != 0:
+        return None
+    for _ in range(30):
+        time.sleep(0.015)
+        try:
+            if visible.stat().st_mtime_ns != before:
+                break
+        except OSError:
+            continue
+    else:
+        return None
+
+    lines = visible.read_text().split("\n")
+    scale = window["scale"]
+    pad_x, pad_y = foot_pad()
+    pad_x *= scale
+    pad_y *= scale
+    cell_w = (window["w"] * scale - 2 * pad_x) / cols
+    cell_h = (window["h"] * scale - 2 * pad_y) / rows
+    if cell_w <= 2 or cell_h <= 4:
+        return None
+    words = []
+    row = 0
+    for line in lines:
+        # foot pipes logical lines; longer ones wrap at the column count.
+        for m in re.finditer(r"\S+", line):
+            folded = norm(m.group())
+            if not folded:
+                continue
+            row_offset, col = divmod(m.start(), cols)
+            width_chars = min(m.end() - m.start(), cols - col)
+            words.append((folded, pad_x + col * cell_w,
+                          pad_y + (row + row_offset) * cell_h,
+                          width_chars * cell_w, cell_h))
+        row += max(1, -(-len(line) // cols))
+    return words or None
 
 
 # --------------------------------------------------------------------------
@@ -646,10 +750,19 @@ def fill_gaps(boxes, spoken) -> list[dict]:
 # --------------------------------------------------------------------------
 
 
-def acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr, timings):
+def acquire(arr, window, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr,
+            timings, try_grid=True):
     """One attempt to place the spoken words on this screenshot. Returns
     (image boxes, backend) or (None, reason); backend "ocr-partial" means
     only the fast cursor band ran and a full pass should upgrade it."""
+    if try_grid and window is not None:
+        t0 = time.time()
+        grid = foot_grid_words(window)
+        timings["grid"] = round(time.time() - t0, 2)
+        if grid:
+            boxes = strip_tags(drop_outliers(align(spoken, grid)))
+            if len(boxes) >= 8 or len(boxes) / max(1, len(spoken)) >= 0.5:
+                return fill_gaps(boxes, spoken), "grid"
     if sel_text.strip():
         t0 = time.time()
         found = selection_boxes(arr if arr.ndim == 3 else None, sel_text, spoken)
@@ -756,6 +869,8 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
     tick = 0
     calm = 0
     dy = 0.0
+    grid_dead = False
+    grid_misses = 0
     height_img = int(window["h"] * window["scale"])
     radius = 460
 
@@ -784,6 +899,39 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
         resized = abs(now["w"] - window["w"]) > 2 or abs(now["h"] - window["h"]) > 2
         window = now
         height_img = int(window["h"] * window["scale"])
+
+        # The terminal's own text beats every pixel method: exact, ~70 ms,
+        # and fresh even while the terminal streams. Re-read it per tick.
+        if backend == "grid" and not grid_dead:
+            if not window_focused(window["address"]):
+                calm += 1
+                continue  # keys must not land in some other window
+            words = foot_grid_words(window)
+            if words:
+                grid_misses = 0
+                boxes2 = fill_gaps(strip_tags(drop_outliers(align(spoken, words))), spoken)
+                if len(boxes2) >= 8 or len(boxes2) / max(1, len(spoken)) >= 0.5:
+                    if boxes2 != img_boxes:
+                        calm = 0
+                        img_boxes = boxes2
+                        emit(uid, True, backend="grid", boxes=to_layout(img_boxes, window),
+                             matched=len(img_boxes), total=len(spoken))
+                        shown = True
+                    else:
+                        calm += 1
+                    continue
+                # The words scrolled out of the visible text: hide rather
+                # than guess, and keep watching for their return.
+                if shown:
+                    emit(uid, False, error="text left the view")
+                    shown = False
+                img_boxes = []
+                calm = 0
+                continue
+            grid_misses += 1
+            if grid_misses < 2:
+                continue
+            grid_dead = True  # binding gone or window replaced; fall back
 
         # A partial cursor-band result gets one full pass to complete it.
         upgrade = backend == "ocr-partial" and ocr_budget > 0
@@ -822,7 +970,9 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
             continue
         timings: dict = {}
         allow_ocr = upgrade or (ocr_budget > 0 and tick % 4 == 2)
-        boxes, got = acquire(arr, spoken, sel_text, tess_lang, None, allow_ocr, timings)
+        boxes, got = acquire(arr, window, spoken, sel_text, tess_lang, None,
+                             allow_ocr, timings,
+                             try_grid=not grid_dead and window_focused(window["address"]))
         if allow_ocr and "ocr" in timings:
             ocr_budget -= 1
         if boxes and (not upgrade or len(boxes) >= len(img_boxes)):
@@ -896,7 +1046,8 @@ def main() -> int:
         origin = origin or (0.0, 0.0)
         window = {"x": origin[0], "y": origin[1], "scale": scale,
                   "w": arr.shape[1] / scale, "h": arr.shape[0] / scale, "address": None}
-        boxes, backend = acquire(arr, spoken, sel_text, tess_lang, None, True, timings)
+        boxes, backend = acquire(arr, window, spoken, sel_text, tess_lang,
+                                 None, True, timings, try_grid=False)
         if boxes:
             emit(uid, True, backend=backend, boxes=to_layout(boxes, window),
                  matched=len(boxes), total=len(spoken), timings=timings)
@@ -921,7 +1072,8 @@ def main() -> int:
         emit(uid, False, error="screenshot failed")
         return 0
     try:
-        boxes, backend = acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, True, timings)
+        boxes, backend = acquire(arr, window, spoken, sel_text, tess_lang,
+                                 cursor_img_y, True, timings)
     except ImportError:
         emit(uid, False, error="numpy is not available to /usr/bin/python3")
         return 0

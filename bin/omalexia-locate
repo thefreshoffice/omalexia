@@ -110,7 +110,8 @@ def _window_dict(win, monitors):
         if mon.get("id") == win.get("monitor"):
             scale = float(mon.get("scale") or 1.0)
     return {"x": float(x), "y": float(y), "w": float(w), "h": float(h),
-            "scale": scale, "address": win.get("address"), "pid": win.get("pid")}
+            "scale": scale, "address": win.get("address"), "pid": win.get("pid"),
+            "title": win.get("title")}
 
 
 def focused_window():
@@ -348,6 +349,221 @@ def foot_grid_words(window):
                           width_chars * cell_w, cell_h))
         row += max(1, -(-len(line) // cols))
     return words or None
+
+
+# --------------------------------------------------------------------------
+# Backend 0.5: the app's accessibility tree (AT-SPI)
+# --------------------------------------------------------------------------
+
+# The macOS way, on Linux: ask the application itself. Browsers, Electron
+# apps, GTK and Qt editors expose their text and geometry over AT-SPI once
+# an assistive client is around (the daemon raises the session flags, and
+# querying relation sets is the Orca-like tell that makes Chromium build
+# its web tree retroactively). Range extents are degenerate under
+# Chromium/Wayland, but node boxes and layout line boundaries work, which
+# pins every word to its exact line with a character-width estimate for x.
+
+_ATSPI_CACHE: dict = {"mod": None}
+
+
+def _atspi():
+    if _ATSPI_CACHE["mod"] is None:
+        try:
+            import gi
+            gi.require_version("Atspi", "2.0")
+            from gi.repository import Atspi
+            _ATSPI_CACHE["mod"] = Atspi
+        except Exception:  # noqa: BLE001
+            _ATSPI_CACHE["mod"] = False
+    return _ATSPI_CACHE["mod"] or None
+
+
+def _atspi_app(Atspi, pid):
+    desktop = Atspi.get_desktop(0)
+    for i in range(desktop.get_child_count()):
+        app = desktop.get_child_at_index(i)
+        try:
+            if app is not None and app.get_process_id() == pid:
+                return app
+        except Exception:  # noqa: BLE001
+            continue
+    return None
+
+
+def _atspi_poke(node, depth=0):
+    """Chromium and Electron build their web trees only once an assistive
+    client behaves like one; querying relation sets is the signal."""
+    if node is None or depth > 2:
+        return
+    try:
+        node.get_relation_set()
+        count = node.get_child_count()
+    except Exception:  # noqa: BLE001
+        return
+    for j in range(min(count, 20)):
+        _atspi_poke(node.get_child_at_index(j), depth + 1)
+
+
+def _atspi_frame(Atspi, app, title):
+    frames = []
+    try:
+        count = app.get_child_count()
+    except Exception:  # noqa: BLE001
+        return None
+    for i in range(count):
+        frame = app.get_child_at_index(i)
+        if frame is None:
+            continue
+        frames.append(frame)
+        try:
+            if frame.get_state_set().contains(Atspi.StateType.ACTIVE):
+                return frame
+        except Exception:  # noqa: BLE001
+            continue
+    for frame in frames:
+        try:
+            if title and frame.get_name() == title:
+                return frame
+        except Exception:  # noqa: BLE001
+            continue
+    return frames[0] if frames else None
+
+
+def _node_words(Atspi, node, extents):
+    """Words of one text node with raw-toolkit-unit boxes: exact range
+    extents when the toolkit provides them, else the node box divided by
+    its layout lines with a character-width estimate."""
+    n = Atspi.Text.get_character_count(node)
+    if not 1 <= n <= 20000:
+        return []
+    text = Atspi.Text.get_text(node, 0, n)
+    if not text.strip():
+        return []
+    lines = []
+    off = 0
+    for _ in range(400):
+        if off >= n:
+            break
+        got = Atspi.Text.get_string_at_offset(node, off, Atspi.TextGranularity.LINE)
+        if got is None or got.end_offset <= off:
+            break
+        lines.append((got.start_offset, got.end_offset))
+        off = got.end_offset
+    if not lines:
+        lines = [(0, n)]
+    x, y, w, h = extents
+    line_h = h / len(lines)
+    longest = max(max(le - ls, 1) for ls, le in lines)
+    char_w = w / longest
+    words = []
+    for i, (ls, le) in enumerate(lines):
+        segment = text[ls:le]
+        for m in re.finditer(r"\S+", segment):
+            folded = norm(m.group())
+            if not folded:
+                continue
+            box = None
+            try:
+                r = Atspi.Text.get_range_extents(
+                    node, ls + m.start(), ls + m.end(), Atspi.CoordType.WINDOW)
+                if r.width > 1 and r.height > 1:
+                    box = (float(r.x), float(r.y), float(r.width), float(r.height))
+            except Exception:  # noqa: BLE001
+                pass
+            if box is None:
+                box = (x + m.start() * char_w, y + i * line_h,
+                       max(char_w, (m.end() - m.start()) * char_w), line_h)
+            words.append((folded, *box))
+    return words
+
+
+def tree_words(window):
+    """(norm, x, y, w, h) image-pixel words from the focused application's
+    accessibility tree, or None when the app does not serve one."""
+    Atspi = _atspi()
+    pid = window.get("pid")
+    if Atspi is None or not pid:
+        return None
+
+    saw_document = [False]
+
+    def collect(root, deadline):
+        visited = [0]
+
+        def walk(node, depth):
+            if node is None or depth > 40 or visited[0] > 4000 or time.time() > deadline:
+                return []
+            visited[0] += 1
+            if depth <= 6 and not saw_document[0]:
+                try:
+                    if node.get_role_name().startswith("document"):
+                        saw_document[0] = True
+                except Exception:  # noqa: BLE001
+                    pass
+            got = []
+            try:
+                count = node.get_child_count()
+            except Exception:  # noqa: BLE001
+                return []
+            for j in range(min(count, 150)):
+                got += walk(node.get_child_at_index(j), depth + 1)
+            if got:
+                return got
+            if not isinstance(node, Atspi.Text):
+                return []
+            try:
+                state = node.get_state_set()
+                if not state.contains(Atspi.StateType.SHOWING):
+                    return []
+                e = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
+            except Exception:  # noqa: BLE001
+                return []
+            if e.width <= 2 or e.height <= 2:
+                return []
+            try:
+                return _node_words(Atspi, node, (float(e.x), float(e.y),
+                                                 float(e.width), float(e.height)))
+            except Exception:  # noqa: BLE001
+                return []
+        return walk(root, 0)
+
+    try:
+        app = _atspi_app(Atspi, pid)
+        if app is None:
+            return None
+        root = _atspi_frame(Atspi, app, window.get("title"))
+        if root is None:
+            return None
+        raw = collect(root, time.time() + 2.0)
+        if not raw:
+            _atspi_poke(app)
+            time.sleep(0.5)
+            root = _atspi_frame(Atspi, app, window.get("title"))
+            raw = collect(root, time.time() + 2.5) if root is not None else []
+        if not raw:
+            return None
+        # Toolkits differ on units: web content (a document node exists)
+        # reports physical device pixels, native GTK and Qt report logical
+        # ones. Measured here: Chromium's content is physical while its own
+        # frame claims logical, so the frame cannot be trusted as reference.
+        scale = window["scale"]
+        factor = 1.0 if saw_document[0] or scale <= 1.01 else scale
+
+        def outside(fct):
+            physical_w = window["w"] * scale + 4
+            physical_h = window["h"] * scale + 4
+            bad = sum(1 for _, x, y, w, h in raw
+                      if (x + w) * fct > physical_w or (y + h) * fct > physical_h)
+            return bad / max(1, len(raw))
+
+        if outside(factor) > 0.2:
+            alternative = scale if factor == 1.0 else 1.0
+            if outside(alternative) < outside(factor):
+                factor = alternative
+        return [(t, x * factor, y * factor, w * factor, h * factor)
+                for t, x, y, w, h in raw]
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -763,6 +979,13 @@ def acquire(arr, window, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr,
             boxes = strip_tags(drop_outliers(align(spoken, grid)))
             if len(boxes) >= 8 or len(boxes) / max(1, len(spoken)) >= 0.5:
                 return fill_gaps(boxes, spoken), "grid"
+        t0 = time.time()
+        tree = tree_words(window)
+        timings["tree"] = round(time.time() - t0, 2)
+        if tree:
+            boxes = strip_tags(drop_outliers(align(spoken, tree)))
+            if len(boxes) >= 8 or len(boxes) / max(1, len(spoken)) >= 0.5:
+                return fill_gaps(boxes, spoken), "tree"
     if sel_text.strip():
         t0 = time.time()
         found = selection_boxes(arr if arr.ndim == 3 else None, sel_text, spoken)
@@ -900,13 +1123,14 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
         window = now
         height_img = int(window["h"] * window["scale"])
 
-        # The terminal's own text beats every pixel method: exact, ~70 ms,
-        # and fresh even while the terminal streams. Re-read it per tick.
-        if backend == "grid" and not grid_dead:
+        # The window's own text (terminal grid or accessibility tree) beats
+        # every pixel method: exact, fast, and fresh even while the window
+        # streams or scrolls. Re-read it per tick.
+        if backend in ("grid", "tree") and not grid_dead:
             if not window_focused(window["address"]):
                 calm += 1
                 continue  # keys must not land in some other window
-            words = foot_grid_words(window)
+            words = foot_grid_words(window) if backend == "grid" else tree_words(window)
             if words:
                 grid_misses = 0
                 boxes2 = fill_gaps(strip_tags(drop_outliers(align(spoken, words))), spoken)
@@ -914,7 +1138,7 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
                     if boxes2 != img_boxes:
                         calm = 0
                         img_boxes = boxes2
-                        emit(uid, True, backend="grid", boxes=to_layout(img_boxes, window),
+                        emit(uid, True, backend=backend, boxes=to_layout(img_boxes, window),
                              matched=len(img_boxes), total=len(spoken))
                         shown = True
                     else:

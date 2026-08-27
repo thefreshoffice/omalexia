@@ -1202,6 +1202,17 @@ def main():
     if "--help" in sys.argv or "-h" in sys.argv:
         print(__doc__)
         return
+    # Raise the session accessibility flags so applications (browsers,
+    # Electron, GTK, Qt) keep their accessibility trees warm; that is what
+    # lets omalexia-locate ask a window for its own text and geometry
+    # instead of reading pixels. Best effort; harmless where unsupported.
+    for prop in ("IsEnabled", "ScreenReaderEnabled"):
+        try:
+            subprocess.run(["busctl", "--user", "set-property", "org.a11y.Bus",
+                            "/org/a11y/bus", "org.a11y.Status", prop, "b", "true"],
+                           capture_output=True, timeout=5)
+        except Exception:  # noqa: BLE001
+            pass
     daemon = Daemon()
     daemon.preload()
     daemon.serve()

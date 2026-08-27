@@ -115,7 +115,13 @@ foot's pipe-visible, the locator presses it, and the terminal hands over
 its exact visible text; with the tty's rows and columns every word
 position is plain cell arithmetic, refreshed live while the terminal
 streams (about 80 ms per check). New terminals only; foot reads its
-configuration at startup. When the reading came
+configuration at startup. Everywhere else the window is asked over the
+accessibility tree, the same mechanism macOS Spoken Content uses: the
+daemon raises the session accessibility flags so browsers, Electron
+apps and GTK and Qt editors keep their trees warm, and the locator
+reads each text node's box and layout lines from the application
+itself (about half a second, line-exact, scroll-following). Only when
+a window offers neither its grid nor a tree does OCR still step in. When the reading came
 from a visible selection, the highlight itself marks the text: the
 highlighted rows are detected by colour (a themed selection colour or
 foot-style inverted fg/bg alike) and the selected text is fitted onto them

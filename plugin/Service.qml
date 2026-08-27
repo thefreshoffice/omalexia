@@ -203,17 +203,51 @@ Item {
   property int highlightUtterance: -1
   property string highlightSentence: ""
   property int highlightSentenceStart: -1
+  property int highlightSentenceEnd: -1
   property int highlightWordStart: -1
   property int highlightWordEnd: -1
   property var highlightBoxes: ({})
   property var highlightBox: null
+  property var highlightSentenceRects: []
 
   function clearHighlight() {
     highlightSentence = ""
     highlightSentenceStart = -1
+    highlightSentenceEnd = -1
     highlightWordStart = -1
     highlightWordEnd = -1
     highlightBox = null
+    highlightSentenceRects = []
+  }
+
+  // A faint wash over the whole sentence being read (one rectangle per
+  // text line), the steady backdrop the word pill moves across. It gives
+  // the eye an anchor the moment a sentence starts, before its first word
+  // event, and hides the odd word the matcher could not place.
+  function computeSentenceRects() {
+    var rects = []
+    if (highlightSentenceStart >= 0) {
+      var boxes = []
+      for (var k in highlightBoxes) {
+        var b = highlightBoxes[k]
+        if (b.start >= highlightSentenceStart && b.start < highlightSentenceEnd) boxes.push(b)
+      }
+      boxes.sort(function(p, q) { return p.y - q.y || p.x - q.x })
+      var line = null
+      for (var i = 0; i < boxes.length; i++) {
+        var box = boxes[i]
+        if (line && Math.abs(box.y - line.y) < line.h * 0.6) {
+          line.x1 = Math.max(line.x1, box.x + box.w)
+          line.x0 = Math.min(line.x0, box.x)
+          line.h = Math.max(line.h, box.h)
+        } else {
+          if (line) rects.push(line)
+          line = { x0: box.x, x1: box.x + box.w, y: box.y, h: box.h }
+        }
+      }
+      if (line) rects.push(line)
+    }
+    highlightSentenceRects = rects
   }
 
   function handleSpeakEvent(line) {
@@ -232,22 +266,30 @@ Item {
       var list = ev.boxes || []
       for (var i = 0; i < list.length; i++) map[String(list[i].start)] = list[i]
       highlightBoxes = map
-      // Reading may already be a few words in when OCR finishes.
-      if (highlightWordStart >= 0) {
+      // Reading may already be under way when boxes (re)arrive; place the
+      // marker on the current word, and clear it only when tracking is
+      // genuinely gone (an empty update).
+      if (list.length === 0) {
+        highlightBox = null
+      } else if (highlightWordStart >= 0) {
         var cur = map[String(highlightWordStart)]
-        highlightBox = cur === undefined ? null : cur
+        if (cur !== undefined) highlightBox = cur
       }
+      computeSentenceRects()
     } else if (ev.event === "sentence") {
       highlightSentence = String(ev.text || "")
       highlightSentenceStart = ev.start === undefined ? -1 : Number(ev.start)
+      highlightSentenceEnd = ev.end === undefined ? -1 : Number(ev.end)
       highlightWordStart = -1
       highlightWordEnd = -1
-      highlightBox = null
+      // The marker stays where it is until the next word has a box; a
+      // blink at every sentence boundary reads as instability.
+      computeSentenceRects()
     } else if (ev.event === "word") {
       highlightWordStart = Number(ev.start)
       highlightWordEnd = Number(ev.end)
       var b = highlightBoxes[String(ev.start)]
-      highlightBox = b === undefined ? null : b
+      if (b !== undefined) highlightBox = b
     } else if (ev.event === "end") {
       highlightBoxes = {}
       clearHighlight()

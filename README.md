@@ -118,10 +118,16 @@ or terminal, because no app cooperation is needed; when the text is not
 visible (reading the clipboard from elsewhere), nothing is drawn rather
 than something wrong. The locator keeps following for the whole reading,
 the way macOS Spoken Content re-queries text geometry while it speaks:
-about once a second it re-captures the window, finds the tracked text
-again by row-signature correlation (so scrolling and window moves shift
-the marker instead of stranding it), re-fits a moved selection exactly,
-and hides the marker when the text leaves the screen. The panel's "Highlight words" setting
+it re-captures just the tracked strip (quick checks while things move,
+lazy ones once the screen settles), finds the text again by row-signature
+correlation (so scrolling and window moves shift the marker instead of
+stranding it), re-fits a moved selection exactly, and hides the marker
+when the text leaves the screen. The rendering is built not to flicker:
+the sentence being read gets a faint steady wash with the word pill
+riding on top, missed words are interpolated between their neighbours
+instead of blinking the marker off, every text line gets one uniform
+rail height so the pill does not bounce with letter shapes, and the pill
+fades and glides rather than popping. The panel's "Highlight words" setting
 switches between marking the text, a subtitle bar at the bottom of the
 screen showing the sentence with the spoken word in a pill, or off. Pairs
 best with reading mode, which keeps the window still.

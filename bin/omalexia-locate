@@ -155,12 +155,19 @@ def read_primary_selection(override: Path | None) -> str:
     return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
 
 
-def screenshot(window):
-    """The window region as an RGB array, via raw PPM (no codec time)."""
+def screenshot(window, band=None):
+    """The window region as an RGB array, via raw PPM (no codec time).
+    `band` (top, bottom in image pixels) captures just that strip: the
+    cheap way to check for scrolling on every tick."""
+    x, y = window["x"], window["y"]
+    w, h = window["w"], window["h"]
+    if band is not None:
+        scale = window["scale"]
+        y = window["y"] + band[0] / scale
+        h = (band[1] - band[0]) / scale
     shot = Path(tempfile.mkstemp(suffix=".ppm", dir=RUNTIME if RUNTIME.exists() else None)[1])
     try:
-        r = run(["grim", "-t", "ppm", "-g",
-                 f"{window['x']:.0f},{window['y']:.0f} {window['w']:.0f}x{window['h']:.0f}",
+        r = run(["grim", "-t", "ppm", "-g", f"{x:.0f},{y:.0f} {w:.0f}x{h:.0f}",
                  str(shot)], timeout=15)
         if r.returncode != 0:
             return None
@@ -504,6 +511,65 @@ def strip_tags(boxes) -> list[dict]:
     return boxes
 
 
+def level_lines(boxes) -> list[dict]:
+    """OCR boxes follow the ink, so 'glide' is tall and 'across' is short
+    and the marker bounces inside one line. Give every text line a single
+    top and height so the pill rides a rail."""
+    if not boxes:
+        return boxes
+    heights = sorted(b["h"] for b in boxes)
+    line_h = max(6.0, heights[len(heights) // 2])
+    order = sorted(range(len(boxes)), key=lambda i: boxes[i]["y"])
+    i = 0
+    while i < len(order):
+        base = boxes[order[i]]["y"]
+        group = [order[i]]
+        j = i + 1
+        while j < len(order) and boxes[order[j]]["y"] - base < 0.6 * line_h:
+            group.append(order[j])
+            j += 1
+        tops = sorted(boxes[g]["y"] for g in group)
+        bottoms = sorted(boxes[g]["y"] + boxes[g]["h"] for g in group)
+        top = tops[len(tops) // 2]
+        bottom = bottoms[len(bottoms) // 2]
+        for g in group:
+            boxes[g]["y"] = round(top, 1)
+            boxes[g]["h"] = round(max(bottom - top, line_h * 0.8), 1)
+        i = j
+    return boxes
+
+
+def fill_gaps(boxes, spoken) -> list[dict]:
+    """Words the matcher missed still deserve a marker: between two anchored
+    neighbours on one line, the gap is where the missing words sit. Without
+    this every miss blinks the highlight off and on again."""
+    if not boxes:
+        return boxes
+    index_of = {t[0]: i for i, t in enumerate(spoken)}
+    by_start = {b["start"]: b for b in boxes}
+    matched = sorted(index_of[s] for s in by_start if s in index_of)
+    out = list(boxes)
+    for a, b in zip(matched, matched[1:]):
+        gap = b - a - 1
+        if not 1 <= gap <= 3:
+            continue
+        left = by_start[spoken[a][0]]
+        right = by_start[spoken[b][0]]
+        if abs(left["y"] - right["y"]) > 0.6 * max(left["h"], right["h"]):
+            continue
+        span0 = left["x"] + left["w"]
+        span1 = right["x"]
+        if span1 - span0 < 5 * gap:
+            continue
+        step = (span1 - span0) / gap
+        for k in range(gap):
+            s, e, _ = spoken[a + 1 + k]
+            out.append({"start": s, "end": e,
+                        "x": round(span0 + k * step + 1, 1), "y": left["y"],
+                        "w": round(max(step - 2, 3), 1), "h": left["h"]})
+    return out
+
+
 # --------------------------------------------------------------------------
 # Acquisition and tracking
 # --------------------------------------------------------------------------
@@ -511,13 +577,14 @@ def strip_tags(boxes) -> list[dict]:
 
 def acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr, timings):
     """One attempt to place the spoken words on this screenshot. Returns
-    (image boxes, backend) or (None, reason)."""
+    (image boxes, backend) or (None, reason); backend "ocr-partial" means
+    only the fast cursor band ran and a full pass should upgrade it."""
     if sel_text.strip():
         t0 = time.time()
         found = selection_boxes(arr if arr.ndim == 3 else None, sel_text, spoken)
         timings["sel"] = round(time.time() - t0, 2)
         if found:
-            return found, "selection"
+            return fill_gaps(found, spoken), "selection"
     if not allow_ocr:
         return None, "selection not on screen"
     gray = to_gray(arr)
@@ -526,6 +593,7 @@ def acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr, timings):
     if gray.mean() < 128:
         gray = 255 - gray
     boxes = []
+    partial = False
     if cursor_img_y is not None:
         y0 = int(max(0, cursor_img_y - CURSOR_BAND))
         y1 = int(min(gray.shape[0], cursor_img_y + CURSOR_BAND))
@@ -534,19 +602,24 @@ def acquire(arr, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr, timings):
             ocr = ocr_array(gray[y0:y1], y0, tess_lang)
             boxes = drop_outliers(align(spoken, ocr))
             timings["band"] = round(time.time() - t0, 2)
+            # A partial band result still goes out right away (the first
+            # marker should not wait for a full-window pass on a dense
+            # screen); the follower upgrades it a tick later.
             if len(boxes) < 0.85 * len(spoken):
-                boxes = []  # not (fully) near the cursor; scan it all
+                partial = len(boxes) >= max(6, 0.4 * len(spoken))
+                if not partial:
+                    boxes = []
     if not boxes:
         t0 = time.time()
         ocr = ocr_array(gray, 0, tess_lang)
         timings["ocr"] = round(time.time() - t0, 2)
         boxes = drop_outliers(align(spoken, ocr))
-    boxes = strip_tags(boxes)
+    boxes = fill_gaps(level_lines(strip_tags(boxes)), spoken)
     # A partial match is fine (a long article is only partly on screen); a
     # tiny one means the focused window shows different text.
     if len(boxes) < 8 and len(boxes) / max(1, len(spoken)) < 0.5:
         return None, f"text not on screen ({len(boxes)}/{len(spoken)} words matched)"
-    return boxes, "ocr"
+    return boxes, ("ocr-partial" if partial else "ocr")
 
 
 def signature(gray, np):
@@ -602,12 +675,18 @@ def utterance_state(uid):
 def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
     """Keep the boxes honest for the rest of the utterance: track scrolling
     by row signature, re-fit a moved selection, clear when the text leaves
-    the screen, and keep trying when nothing has been found yet."""
+    the screen, and keep trying when nothing has been found yet. Ticks are
+    quick while things move and lazy once the screen has settled, and each
+    quiet check captures only the tracked strip, not the whole window."""
     import numpy as np
     ref = r0 = None
     shown = bool(img_boxes)
     ocr_budget = 2
     tick = 0
+    calm = 0
+    dy = 0.0
+    height_img = int(window["h"] * window["scale"])
+    radius = 460
 
     def anchor(gray_now):
         nonlocal ref, r0
@@ -620,10 +699,9 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
         ref, r0 = sig[top:bottom].copy(), top
 
     anchor(to_gray(arr))
-    dy = 0.0
 
     while utterance_state(uid):
-        time.sleep(TICK)
+        time.sleep(0.35 if calm < 3 else 0.9)
         tick += 1
         if not utterance_state(uid):
             break
@@ -634,43 +712,59 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
             return
         resized = abs(now["w"] - window["w"]) > 2 or abs(now["h"] - window["h"]) > 2
         window = now
-        arr = screenshot(window)
-        if arr is None:
-            continue
-        gray = to_gray(arr)
+        height_img = int(window["h"] * window["scale"])
+
+        # A partial cursor-band result gets one full pass to complete it.
+        upgrade = backend == "ocr-partial" and ocr_budget > 0
 
         moved = None
-        if ref is not None and not resized:
-            pos = find_shift(ref, signature(gray, np), r0 + dy, np)
+        if ref is not None and not resized and not upgrade:
+            band0 = int(max(0, r0 + dy - radius))
+            band1 = int(min(height_img, r0 + dy + ref.shape[0] + radius))
+            strip = screenshot(window, (band0, band1))
+            if strip is None:
+                continue
+            sig = signature(to_gray(strip), np)
+            pos = find_shift(ref, sig, r0 + dy - band0, np, radius=radius + 40)
             if pos is not None:
-                moved = pos - r0
+                moved = band0 + pos - r0
 
         if moved is not None:
             if abs(moved - dy) > 1 or tick == 1:
+                calm = 0
                 dy = float(moved)
                 shifted = [{**b, "y": b["y"] + dy} for b in img_boxes]
                 emit(uid, True, backend=backend, boxes=to_layout(shifted, window),
                      matched=len(shifted), total=len(spoken))
                 shown = True
+            else:
+                calm += 1
             continue
 
-        # Track lost (scrolled far, content changed, window resized) or
-        # nothing acquired yet: try to re-acquire. The selection detector is
-        # cheap and runs every tick; OCR is rationed.
+        # Track lost (scrolled far, content changed, window resized), a
+        # partial result to upgrade, or nothing acquired yet: re-acquire on
+        # a full capture. The selection detector is cheap and runs every
+        # time; OCR is rationed.
+        calm = 0
+        arr = screenshot(window)
+        if arr is None:
+            continue
         timings: dict = {}
-        allow_ocr = ocr_budget > 0 and tick % 4 == 2
+        allow_ocr = upgrade or (ocr_budget > 0 and tick % 4 == 2)
         boxes, got = acquire(arr, spoken, sel_text, tess_lang, None, allow_ocr, timings)
         if allow_ocr and "ocr" in timings:
             ocr_budget -= 1
-        if boxes:
+        if boxes and (not upgrade or len(boxes) >= len(img_boxes)):
             img_boxes = boxes
             backend = got
             dy = 0.0
-            anchor(gray)
+            anchor(to_gray(arr))
             emit(uid, True, backend=backend, boxes=to_layout(img_boxes, window),
                  matched=len(img_boxes), total=len(spoken), timings=timings)
             shown = True
-        elif shown:
+        elif upgrade:
+            backend = "ocr"  # the partial fix stands; do not retry forever
+        elif not boxes and shown:
             emit(uid, False, error="tracking lost")
             shown = False
 

@@ -32,7 +32,10 @@ PanelWindow {
   readonly property bool showMarker: mode === "text" && boxOnScreen
   readonly property bool showBar: mode === "bar" && sentence !== ""
 
-  visible: showMarker || showBar
+  // Stay mapped for the whole reading: unmapping and remapping a layer
+  // surface on every marker gap is exactly the flicker it should not have.
+  visible: (service !== null && service.speaking === true && mode !== "off")
+           || showMarker || showBar
 
   exclusionMode: ExclusionMode.Ignore
   WlrLayershell.namespace: "omalexia-read-along"
@@ -50,23 +53,49 @@ PanelWindow {
   // grayscale themes get a classic highlighter yellow instead.
   readonly property color markerBase: Color.accent.hslSaturation > 0.35 ? Color.accent : "#f2c744"
 
-  // ---- mode "text": marker over the word where it stands ---------------
+  // ---- mode "text": sentence wash + marker over the word ---------------
+
+  // The whole sentence being read gets a faint, steady wash; the pill for
+  // the spoken word rides on top. The wash appears the moment a sentence
+  // starts and absorbs the odd word the matcher could not place, so the
+  // highlight never blinks.
+  Repeater {
+    model: root.mode === "text" && root.service ? root.service.highlightSentenceRects : []
+    Rectangle {
+      required property var modelData
+      x: modelData.x0 - root.screenX - 3
+      y: modelData.y - root.screenY - 2
+      width: modelData.x1 - modelData.x0 + 6
+      height: modelData.h + 4
+      radius: Style.space(4)
+      color: Qt.alpha(root.markerBase, 0.12)
+    }
+  }
+
+  // The last known box keeps the pill's geometry stable while it fades
+  // out; binding the geometry to a vanished box would snap it to zero.
+  property var lastBox: null
+  onBoxChanged: if (box !== null) lastBox = box
 
   Rectangle {
     id: marker
-    visible: root.showMarker
-    x: root.box ? root.box.x - root.screenX - 3 : 0
-    y: root.box ? root.box.y - root.screenY - 2 : 0
-    width: root.box ? root.box.w + 6 : 0
-    height: root.box ? root.box.h + 4 : 0
+    visible: root.mode === "text" && root.lastBox !== null
+    opacity: root.showMarker ? 1.0 : 0.0
+    x: root.lastBox ? root.lastBox.x - root.screenX - 3 : 0
+    y: root.lastBox ? root.lastBox.y - root.screenY - 2 : 0
+    width: root.lastBox ? root.lastBox.w + 6 : 0
+    height: root.lastBox ? root.lastBox.h + 4 : 0
     radius: Style.space(4)
     color: Qt.alpha(root.markerBase, 0.32)
     border.width: 1
     border.color: Qt.alpha(root.markerBase, 0.6)
 
-    Behavior on x { enabled: marker.visible && !root.reduced; NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
-    Behavior on y { enabled: marker.visible && !root.reduced; NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
-    Behavior on width { enabled: marker.visible && !root.reduced; NumberAnimation { duration: 90; easing.type: Easing.OutCubic } }
+    // Glide between words; appear and vanish with a soft fade rather than
+    // a pop. Size snaps instantly: a pill that stretches while it moves
+    // reads as wobble.
+    Behavior on opacity { NumberAnimation { duration: 130 } }
+    Behavior on x { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 110; easing.type: Easing.InOutQuad } }
+    Behavior on y { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 110; easing.type: Easing.InOutQuad } }
   }
 
   // ---- mode "bar": sentence card with the word in a pill ---------------

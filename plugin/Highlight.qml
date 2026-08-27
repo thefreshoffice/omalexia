@@ -92,10 +92,12 @@ PanelWindow {
 
     // Glide between words; appear and vanish with a soft fade rather than
     // a pop. Size snaps instantly: a pill that stretches while it moves
-    // reads as wobble.
+    // reads as wobble. The glide is brisk on purpose: at reading speed a
+    // short word owns the pill for barely 120 ms, and a slow glide would
+    // swallow that visit whole, which reads as a skipped word.
     Behavior on opacity { NumberAnimation { duration: 130 } }
-    Behavior on x { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 110; easing.type: Easing.InOutQuad } }
-    Behavior on y { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 110; easing.type: Easing.InOutQuad } }
+    Behavior on x { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 65; easing.type: Easing.OutQuad } }
+    Behavior on y { enabled: marker.opacity > 0 && !root.reduced; NumberAnimation { duration: 65; easing.type: Easing.OutQuad } }
   }
 
   // ---- mode "bar": sentence card with the word in a pill ---------------

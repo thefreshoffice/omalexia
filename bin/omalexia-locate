@@ -424,7 +424,10 @@ def ocr_array(gray, base_y: int, tess_lang: str) -> list[tuple[str, float, float
         src.write_bytes(b"P5\n%d %d\n255\n" % (width, bottom - top) + chunk.tobytes())
         jobs.append((top, subprocess.Popen(
             ["tesseract", str(src), "-", "-l", tess_lang, "tsv"],
-            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)))
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env,
+            # OCR is latency-tolerant; speech synthesis is not. Yield the
+            # fast cores so the voice never pauses for a screenshot.
+            preexec_fn=lambda: os.nice(10))))
 
     words = []
     seen: dict[str, list[tuple[float, float]]] = {}
@@ -556,6 +559,23 @@ def fill_gaps(boxes, spoken) -> list[dict]:
         left = by_start[spoken[a][0]]
         right = by_start[spoken[b][0]]
         if abs(left["y"] - right["y"]) > 0.6 * max(left["h"], right["h"]):
+            # Across a line break the wrap point is unknowable; place one
+            # missing word next to an anchor rather than skip its beat, but
+            # never guess a whole run of them.
+            if gap != 1:
+                continue
+            s, e, _ = spoken[a + 1]
+            char_w = (left["w"] / max(1, left["end"] - left["start"])
+                      + right["w"] / max(1, right["end"] - right["start"])) / 2
+            width = max(4.0, char_w * (e - s))
+            x = right["x"] - width - char_w
+            if x >= 2:
+                out.append({"start": s, "end": e, "x": round(x, 1),
+                            "y": right["y"], "w": round(width, 1), "h": right["h"]})
+            else:
+                out.append({"start": s, "end": e,
+                            "x": round(left["x"] + left["w"] + char_w, 1),
+                            "y": left["y"], "w": round(width, 1), "h": left["h"]})
             continue
         span0 = left["x"] + left["w"]
         span1 = right["x"]

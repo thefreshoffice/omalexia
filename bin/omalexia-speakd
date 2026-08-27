@@ -250,19 +250,32 @@ def prepare_text(text: str) -> str:
     text = BULLET_RE.sub("", text)
     text = re.sub(r"[*_`>#|]+", " ", text)
     lines = [ln.rstrip() for ln in text.split("\n")]
+    paragraphs: list[str] = []
     out: list[str] = []
+
+    def close_paragraph():
+        nonlocal out
+        if not out:
+            return
+        if not re.search(r"[.!?:;…]$", out[-1]):
+            out[-1] += "."
+        paragraphs.append(" ".join(out))
+        out = []
+
     for ln in lines:
         if not ln.strip():
-            # Paragraph break: make sure the previous sentence closes.
-            if out and not re.search(r"[.!?:;…]$", out[-1]):
-                out[-1] += "."
+            # Paragraph break: close the sentence and keep the boundary (a
+            # newline in the prepared text), so the reader breathes there
+            # the way a human would instead of rushing into the next topic.
+            close_paragraph()
             continue
-        if out and not re.search(r"[.!?:;…]$", out[-1]) and not out[-1].endswith("\n"):
+        if out and not re.search(r"[.!?:;…]$", out[-1]):
             out[-1] = out[-1] + " " + ln.strip()
         else:
             out.append(ln.strip())
-    text = " ".join(out)
-    text = re.sub(r"\s+", " ", text).strip()
+    close_paragraph()
+    text = "\n".join(paragraphs)
+    text = re.sub(r"[ \t]+", " ", text).strip()
     return text
 
 
@@ -273,8 +286,8 @@ ABBREVIATIONS = {
 }
 
 
-def split_sentences(text: str) -> list[str]:
-    """Split prepared text into sentences so the daemon can re-read the speed
+def _split_paragraph(text: str) -> list[str]:
+    """Split one paragraph into sentences so the daemon can re-read the speed
     between them. Boundaries the engines would find themselves; a wrong split
     only shortens one synthesis call."""
     parts: list[str] = []
@@ -303,6 +316,23 @@ def split_sentences(text: str) -> list[str]:
             merged.append(part)
     return merged or [text]
 
+
+def split_sentences(text: str) -> list[tuple[str, bool]]:
+    """(sentence, starts_new_paragraph) pairs across the prepared text;
+    paragraph boundaries survive as newlines and earn a longer pause."""
+    result: list[tuple[str, bool]] = []
+    for p_index, para in enumerate(text.split("\n")):
+        para = para.strip()
+        if not para:
+            continue
+        for s_index, part in enumerate(_split_paragraph(para)):
+            result.append((part, p_index > 0 and s_index == 0))
+    return result or [(text, False)]
+
+
+# A deliberate breath at every paragraph boundary; without it a flattened
+# article rushes from one topic into the next.
+PARAGRAPH_GAP_MS = 320
 
 # Speeds above ENGINE_SPEED_MAX are produced by synthesizing at 2x and
 # time-stretching the audio with ffmpeg's atempo filter (pitch-preserving;
@@ -487,10 +517,6 @@ class KokoroWorker:
             stdout=subprocess.PIPE,
             stderr=sys.stderr,
             cwd=KOKORO_DIR,
-            # Slightly nice so its burst does not push omalexia-locate's OCR
-            # workers off the fast cores; the 4 s write-ahead buffer absorbs
-            # what little this costs the synthesis.
-            preexec_fn=lambda: os.nice(5),
         )
         self.lock = threading.Lock()
         line = self.proc.stdout.readline()
@@ -877,18 +903,31 @@ class Daemon:
             queued = 0.0    # seconds of audio handed to the player
             lead_max = 4.0  # buffer this far ahead; also the ceiling on how
                             # long a mid-text speed change can take to apply
+            pending: list[bytes] = []
+            prebuffer = 1.5  # seconds in hand before the first byte plays: a
+                             # short first sentence no longer runs dry while
+                             # the second one is still synthesizing
 
-            def write_paced(pcm: bytes) -> bool:
-                nonlocal queued
-                while clock["start"] is not None and not cancel.is_set():
+            def write_paced(pcm: bytes, hold: bool = False) -> bool:
+                nonlocal queued, pending
+                if clock["start"] is None:
+                    pending.append(pcm)
+                    queued += len(pcm) / 2 / engine.rate
+                    if hold and queued < prebuffer:
+                        return True
+                    data = b"".join(pending)
+                    pending = []
+                    if cancel.is_set() or (data and not player.write(data)):
+                        return False
+                    clock["start"] = time.monotonic()
+                    return True
+                while not cancel.is_set():
                     lead = queued - (time.monotonic() - clock["start"])
                     if lead < lead_max:
                         break
                     cancel.wait(min(lead - lead_max, 0.2))
                 if cancel.is_set() or not player.write(pcm):
                     return False
-                if clock["start"] is None:
-                    clock["start"] = time.monotonic()
                 queued += len(pcm) / 2 / engine.rate
                 return True
 
@@ -933,7 +972,7 @@ class Daemon:
 
             sentences = split_sentences(text)
             pos = 0
-            for index, sentence in enumerate(sentences):
+            for index, (sentence, new_paragraph) in enumerate(sentences):
                 if cancel.is_set():
                     break
                 offset = text.find(sentence, pos)
@@ -943,11 +982,15 @@ class Daemon:
                 now = speed if speed is not None else float(self.config["tts"]["speed"])
                 if last_speed is not None and now != last_speed:
                     log(f"speed {last_speed} -> {now} mid-utterance")
-                if last_speed is not None and gap_ms:
-                    pause = b"\x00\x00" * int(engine.rate * gap_ms / 1000 / now)
-                    if not write_paced(pause):
-                        cancel.set()
-                        break
+                if last_speed is not None:
+                    # The regular seam pause the engine loses to per-sentence
+                    # calls, plus a deliberate breath at a paragraph break.
+                    pause_ms = gap_ms + (PARAGRAPH_GAP_MS if new_paragraph else 0)
+                    if pause_ms:
+                        pause = b"\x00\x00" * int(engine.rate * pause_ms / 1000 / now)
+                        if not write_paced(pause, hold=True):
+                            cancel.set()
+                            break
                 last_speed = now
                 engine_speed = min(now, ENGINE_SPEED_MAX)
                 stretch = now / engine_speed
@@ -965,9 +1008,14 @@ class Daemon:
                 if self.watchers:
                     schedule_words(events, uid, sentence, offset, index,
                                    len(sentences), queued, pcm, engine.rate, lang)
-                if not write_paced(pcm):
+                if not write_paced(pcm, hold=True):
                     cancel.set()
                     break
+            # A very short utterance may never have crossed the pre-buffer
+            # threshold; let what there is play.
+            if not cancel.is_set() and clock["start"] is None and pending:
+                if not write_paced(b""):
+                    cancel.set()
             if not cancel.is_set():
                 # Let the playback clock catch up before closing the sink so
                 # the emitter delivers the tail events; pw-play plays out its

@@ -56,7 +56,11 @@ that the audio is time-stretched with ffmpeg's pitch-preserving atempo
 filter, so 4x stays intelligible instead of becoming a chipmunk. The
 daemon keeps about four seconds of audio buffered ahead of playback, so the
 next sentence is synthesized while the current one plays and sentence
-boundaries stay seamless.
+boundaries stay seamless. Playback starts once about a second and a half is
+in hand, so a short opening sentence no longer runs dry while the second
+one synthesizes, and paragraph breaks keep their identity: the reader takes
+a deliberate breath there instead of rushing on (or worse, an accidental
+gap).
 
 Before speaking it unwraps hard line breaks (e-mails, terminals), drops
 markdown symbols, bullets and `#` headings, and reads URLs as their host

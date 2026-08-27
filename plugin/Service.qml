@@ -306,7 +306,7 @@ Item {
       mode: highlightMode,
       enabled: highlightEnabled,
       daemonActive: daemonActive,
-      watchConnected: speakWatch.connected,
+      watchConnected: watchConnected(),
       utterance: highlightUtterance,
       boxes: boxCount,
       wordStart: highlightWordStart,
@@ -315,37 +315,58 @@ Item {
     }
   }
 
+  // The watch socket is created fresh for every connection attempt: a
+  // Quickshell Socket that hits ServerNotFoundError once (the moment the
+  // daemon restarts, before its socket file is back) silently ignores
+  // every later `connected = true`, which would leave the watch dead.
+  property var speakWatch: null
+
+  Component {
+    id: watchSocket
+    Socket {
+      path: Quickshell.env("XDG_RUNTIME_DIR") + "/omalexia/speakd.sock"
+      parser: SplitParser {
+        onRead: function(line) { root.handleSpeakEvent(String(line)) }
+      }
+      onConnectionStateChanged: {
+        if (connected) {
+          // Bar mode still needs the word timing but no on-screen boxes;
+          // saying so lets the daemon skip the locate work entirely.
+          write("{\"cmd\": \"watch\", \"boxes\": " + (root.highlightMode === "text") + "}\n")
+          flush()
+        } else {
+          root.clearHighlight()
+        }
+      }
+    }
+  }
+
+  function watchConnected() {
+    return speakWatch !== null && speakWatch.connected === true
+  }
+
+  function dropWatch() {
+    if (speakWatch) { speakWatch.destroy(); speakWatch = null }
+  }
+
   function syncWatch() {
     var want = highlightEnabled && daemonActive
-    if (want === speakWatch.connected) return
-    if (want) console.log("omalexia: reconnecting speakd watch")
-    speakWatch.connected = want
+    if (!want) {
+      dropWatch()
+      return
+    }
+    if (watchConnected()) return
+    dropWatch()
+    speakWatch = watchSocket.createObject(root)
+    speakWatch.connected = true
   }
 
   onHighlightEnabledChanged: syncWatch()
   onDaemonActiveChanged: syncWatch()
   onHighlightModeChanged: {
     // The boxes flag is stated when connecting; a mode switch reconnects.
-    if (speakWatch.connected) { speakWatch.connected = false; syncWatch() }
-  }
-
-  Socket {
-    id: speakWatch
-    path: Quickshell.env("XDG_RUNTIME_DIR") + "/omalexia/speakd.sock"
-    parser: SplitParser {
-      onRead: function(line) { root.handleSpeakEvent(String(line)) }
-    }
-    onError: function(err) { console.warn("omalexia speakWatch error:", err) }
-    onConnectionStateChanged: {
-      if (connected) {
-        // Bar mode still needs the word timing but no on-screen boxes;
-        // saying so lets the daemon skip the locate work entirely.
-        write("{\"cmd\": \"watch\", \"boxes\": " + (root.highlightMode === "text") + "}\n")
-        flush()
-      } else {
-        root.clearHighlight()
-      }
-    }
+    dropWatch()
+    syncWatch()
   }
 
   Timer {

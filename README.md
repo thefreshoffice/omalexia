@@ -104,12 +104,19 @@ for the first sentence), not model-load speed.
 spoken is marked right in the text on screen: the daemon knows the exact
 duration of every sentence before playing it, divides it over the words by
 phoneme count (espeak-ng), and streams word events on the playback clock;
-`omalexia-locate` OCRs the focused window once per reading (tesseract with
-word boxes) and matches the spoken words to their on-screen positions, so a
-translucent marker glides across the actual words. That works in any app,
-browser, PDF viewer or terminal, because no app cooperation is needed; when
-the text is not visible (reading the clipboard from elsewhere), nothing is
-drawn rather than something wrong. The panel's "Highlight words" setting
+`omalexia-locate` finds the words on screen once per reading, so a
+translucent marker glides across the actual words. When the reading came
+from a visible selection, the highlight itself marks the text: the
+highlighted rows are detected by colour (a themed selection colour or
+foot-style inverted fg/bg alike) and the selected text is fitted onto them
+as a character grid, pixel-exact in about half a second with no OCR at
+all. Otherwise the window is OCRed (tesseract word boxes, banded and run
+in parallel) and the spoken words aligned to them; a word matched on its
+own that disagrees with its neighbours' geometry is dropped rather than
+highlighted in the wrong place. That works in any app, browser, PDF viewer
+or terminal, because no app cooperation is needed; when the text is not
+visible (reading the clipboard from elsewhere), nothing is drawn rather
+than something wrong. The panel's "Highlight words" setting
 switches between marking the text, a subtitle bar at the bottom of the
 screen showing the sentence with the spoken word in a pill, or off. Pairs
 best with reading mode, which keeps the window still.

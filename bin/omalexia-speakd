@@ -814,7 +814,7 @@ class Daemon:
                 log(f"locate: {exc}")
                 return
             log(f"locate attempt {attempt}: {time.time() - t0:.2f}s, "
-                f"ok={reply.get('ok')} {reply.get('error') or ''}"
+                f"ok={reply.get('ok')} {reply.get('backend') or ''} {reply.get('error') or ''}"
                 f"{reply.get('matched') if reply.get('ok') else ''} {reply.get('t') or ''}")
             if reply.get("ok") and reply.get("id") == uid:
                 event = {"event": "boxes", "id": uid,

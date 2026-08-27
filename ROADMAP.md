@@ -230,10 +230,14 @@ at a real-time factor of 0.05, so speed is not the problem quality has.
       application support after all: the daemon times every word from the
       audio it is about to play (phoneme-weighted, exact at each sentence
       boundary) and streams events over a `watch` socket; `omalexia-locate`
-      OCRs the focused window once per reading and maps the words to their
-      on-screen boxes, and the bar plugin draws a click-through marker over
-      the actual text. A subtitle-bar mode and off switch sit next to it in
-      the panel. Follow-ups, in value order:
+      finds the words on screen once per reading, and the bar plugin draws
+      a click-through marker over the actual text. A subtitle-bar mode and
+      off switch sit next to it in the panel. Since 2026-08-27 a selection
+      backend comes first: the on-screen selection highlight is detected by
+      colour and the selected text fitted onto it as a character grid,
+      pixel-exact in ~0.5 s with no OCR; OCR (banded, single-threaded
+      workers, cursor-band fast pass, geometric outlier filter) remains the
+      fallback for clipboard and screen reads. Follow-ups, in value order:
       - [ ] Re-locate when the text moves: a scroll or window move mid-read
             leaves the boxes behind. Cheap version: re-check the window
             geometry at each sentence and re-OCR when it changed; scrolling

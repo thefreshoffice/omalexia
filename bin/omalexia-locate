@@ -3,32 +3,37 @@
 
 Reads the utterance the daemon just started ($XDG_RUNTIME_DIR/omalexia/
 utterance: id, language, prepared text), screenshots the focused window,
-OCRs it with word boxes (tesseract tsv) and aligns the OCR words with the
-spoken words. Prints one JSON object:
+and maps the spoken words to their on-screen boxes. Prints one JSON object:
 
-  {"ok": true, "id": N, "matched": n, "total": m,
-   "boxes": [{"start": .., "end": .., "x": .., "y": .., "w": .., "h": ..}]}
+  {"ok": true, "id": N, "backend": "selection|ocr", "matched": n,
+   "total": m, "boxes": [{"start": .., "end": .., "x": .., "y": .., "w": .., "h": ..}]}
 
 "start"/"end" are the same global char offsets the daemon's word events
 carry, so an overlay can look a box up straight from an event. Coordinates
 are Hyprland layout (logical) pixels. ok:false means the text could not be
-found on screen (not visible, other window focused, OCR mismatch); the
-caller then simply highlights nothing.
+found on screen (not visible, other window focused, mismatch); the caller
+then simply highlights nothing.
 
-Works for any app because it never asks the app anything: whatever is
-readable on screen is locatable. The price: boxes are a snapshot, so
-scrolling mid-read leaves them behind (reading mode pins the window, which
-is the intended pairing).
+Two backends, best first:
 
-Speed matters here: the marker should join within the first sentence. The
-screenshot is raw PPM (no codec time), preprocessing is numpy, OCR runs as
-single-threaded tesseract workers on concurrent horizontal bands, and a
-selection is first looked for in a band around the mouse cursor, where the
-user just selected it, before paying for the whole window.
+selection: when the reading came from a visible selection, the highlight
+  itself marks the text. The highlighted rows are found by color (long
+  solid runs of non-background, which covers both a themed selection color
+  and foot-style inverted fg/bg), the primary selection's line structure is
+  fitted onto them as a character grid, and every word's box follows by
+  arithmetic. No OCR, exact to the pixel, tens of milliseconds.
 
-Testing hooks: --image FILE --origin X,Y --scale S skip hyprctl and grim
-and treat FILE as a screenshot of a region at layout position X,Y taken at
-scale S.
+ocr: tesseract word boxes aligned to the spoken words (banded,
+  single-threaded workers, a cursor-band fast pass). Works for clipboard
+  and screen reads, or when the selection is gone from view. Lone matches
+  that disagree geometrically with their neighbours are dropped rather
+  than highlighted in the wrong place.
+
+Boxes are a snapshot either way, so scrolling mid-read leaves them behind
+(reading mode pins the window, which is the intended pairing).
+
+Testing hooks: --image FILE --origin X,Y --scale S skip hyprctl and grim;
+--selection FILE stands in for the primary selection.
 """
 
 from __future__ import annotations
@@ -56,7 +61,7 @@ TESS_LANGS = {
     "tr": "tur", "ru": "rus", "uk": "ukr", "el": "ell",
 }
 
-# Logical pixels above and below the cursor for the fast-path band.
+# Logical pixels above and below the cursor for the OCR fast-path band.
 CURSOR_BAND = 450
 
 
@@ -103,9 +108,19 @@ def cursor_pos() -> tuple[float, float] | None:
         return None
 
 
-def load_gray(image: Path):
-    """Grayscale uint8 array (H, W) from a PPM/PGM file (PNG and friends go
-    through one magick conversion, for the test hooks)."""
+def read_primary_selection(override: Path | None) -> str:
+    if override is not None:
+        try:
+            return override.read_text()
+        except OSError:
+            return ""
+    r = run(["wl-paste", "--primary", "--no-newline"], timeout=5)
+    return r.stdout.decode("utf-8", "replace") if r.returncode == 0 else ""
+
+
+def load_pnm(image: Path):
+    """(H, W, 3) RGB or (H, W) gray uint8 array from a PPM/PGM file (other
+    formats go through one magick conversion, for the test hooks)."""
     import numpy as np
     if image.suffix in (".ppm", ".pgm", ".pnm"):
         data = image.read_bytes()
@@ -141,8 +156,166 @@ def load_gray(image: Path):
     else:
         raster = np.frombuffer(data, dtype=np.uint8, count=count, offset=pos)
     if channels == 3:
-        return (raster.reshape(height, width, 3).sum(axis=2, dtype=np.uint16) // 3).astype(np.uint8)
+        return raster.reshape(height, width, 3)
     return raster.reshape(height, width)
+
+
+def to_gray(arr):
+    import numpy as np
+    if arr.ndim == 2:
+        return arr
+    return (arr.sum(axis=2, dtype=np.uint16) // 3).astype(np.uint8)
+
+
+# --------------------------------------------------------------------------
+# Backend 1: the selection highlight as a character grid
+# --------------------------------------------------------------------------
+
+
+def selection_line_runs(sel_text: str) -> list[list[str]]:
+    """The selection's non-empty lines, grouped into runs separated by blank
+    lines (a blank line leaves a gap in the on-screen highlight)."""
+    runs: list[list[str]] = []
+    cur: list[str] = []
+    for ln in sel_text.split("\n"):
+        if ln.strip():
+            cur.append(ln.rstrip())
+        elif cur:
+            runs.append(cur)
+            cur = []
+    if cur:
+        runs.append(cur)
+    return runs
+
+
+def fit_selection(mask, codes, window, line_runs, np):
+    """Fit the selection's line structure onto candidate row segments.
+    Returns per-line geometry and the grid's cell width, or None."""
+    heights = []
+    lines = []  # (text, left, top, rows, width)
+    for seg, texts in zip(window, line_runs):
+        span = seg[-1] - seg[0] + 1
+        cell_h = span / len(texts)
+        if not 7 <= cell_h <= 90:
+            return None
+        heights.append(cell_h)
+        for j, text in enumerate(texts):
+            r0 = seg[0] + int(round(j * cell_h))
+            r1 = min(seg[-1], seg[0] + int(round((j + 1) * cell_h)) - 1)
+            if r1 < r0:
+                return None
+            rows = mask[r0:r1 + 1]
+            density = rows.mean(axis=0)
+            kernel = np.ones(9) / 9
+            smooth = np.convolve(density, kernel, "same")
+            selected = smooth >= 0.55
+            cols = np.flatnonzero(selected)
+            if cols.size == 0:
+                return None
+            # largest contiguous run of selected columns
+            splits = np.flatnonzero(np.diff(cols) > 1)
+            pieces = np.split(cols, splits + 1)
+            piece = max(pieces, key=len)
+            left, right = int(piece[0]), int(piece[-1])
+            width = right - left + 1
+            # It must look like text on a highlight: glyph pixels breaking
+            # the fill colour (whatever both colours are), but nowhere near
+            # an unreadable jumble. A solid bar or image fails here.
+            interior = codes[r0:r1 + 1, left:right + 1]
+            fill = np.bincount(interior.ravel(), minlength=4096).max()
+            glyph_frac = 1.0 - fill / interior.size
+            if not 0.02 <= glyph_frac <= 0.6:
+                return None
+            lines.append((text, left, r0, r1 - r0 + 1, width))
+    if max(heights) > 1.4 * min(heights):
+        return None
+    ratios = [w / max(1, len(t)) for t, _, _, _, w in lines]
+    cell_w = min(ratios)
+    if not 4 <= cell_w <= 64:
+        return None
+    # Trailing highlighted whitespace may widen a row, but never by much.
+    if any(w > len(t) * cell_w * 1.25 + 4 * cell_w for t, _, _, _, w in lines):
+        return None
+    chars = [len(t) for t, *_ in lines]
+    widths = [w for *_, w in lines]
+    if len(lines) >= 3 and len(set(chars)) >= 3:
+        if float(np.corrcoef(chars, widths)[0, 1]) < 0.85:
+            return None
+    return {"lines": lines, "cell_w": cell_w, "score": -float(np.std(ratios))}
+
+
+def selection_boxes(rgb, sel_text, spoken, origin, scale):
+    """Boxes for the spoken words from the on-screen selection highlight,
+    or None when no credible highlight matches the selection's shape."""
+    import numpy as np
+    if rgb is None or rgb.ndim != 3:
+        return None
+    line_runs = selection_line_runs(sel_text)
+    total_lines = sum(len(r) for r in line_runs)
+    if not line_runs or total_lines > 300:
+        return None
+    height, width = rgb.shape[:2]
+    codes = ((rgb[:, :, 0] >> 4).astype(np.uint16) << 8) \
+        | ((rgb[:, :, 1] >> 4).astype(np.uint16) << 4) \
+        | (rgb[:, :, 2] >> 4).astype(np.uint16)
+    hist = np.bincount(codes.ravel(), minlength=4096)
+    background = int(hist.argmax())
+    mask = codes != background
+    # Rows that carry a long solid run of non-background: a selection body
+    # (themed colour or inverted fg/bg alike). Plain text rows never do,
+    # since the gaps between glyphs are background.
+    idx = np.arange(width)
+    last_bg = np.maximum.accumulate(np.where(~mask, idx, -1), axis=1)
+    rowmax = np.where(mask, idx - last_bg, 0).max(axis=1)
+    rows = np.flatnonzero(rowmax >= 24)
+    if rows.size == 0:
+        return None
+    splits = np.flatnonzero(np.diff(rows) > 3)
+    segments = [seg for seg in np.split(rows, splits + 1) if seg[-1] - seg[0] + 1 >= 5]
+    if len(segments) < len(line_runs):
+        return None
+    best = None
+    for s0 in range(len(segments) - len(line_runs) + 1):
+        fit = fit_selection(mask, codes, segments[s0:s0 + len(line_runs)], line_runs, np)
+        if fit and (best is None or fit["score"] > best["score"]):
+            best = fit
+    if best is None:
+        return None
+
+    cell_w = best["cell_w"]
+    sel_words = []  # (norm, x, y, w, h) in image pixels
+    for text, left, top, rows_h, _ in best["lines"]:
+        for m in re.finditer(r"\S+", text):
+            folded = norm(m.group())
+            if folded:
+                sel_words.append((folded, left + m.start() * cell_w, top,
+                                  (m.end() - m.start()) * cell_w, rows_h))
+    if not sel_words:
+        return None
+    matcher = difflib.SequenceMatcher(
+        a=[t[2] for t in spoken], b=[t[0] for t in sel_words], autojunk=False)
+    boxes = []
+    for a, b, size in matcher.get_matching_blocks():
+        for k in range(size):
+            start, end, _ = spoken[a + k]
+            _, x, y, w, h = sel_words[b + k]
+            boxes.append({
+                "start": start, "end": end,
+                "x": round(origin[0] + x / scale, 1),
+                "y": round(origin[1] + y / scale, 1),
+                "w": round(w / scale, 1),
+                "h": round(h / scale, 1),
+            })
+    # The utterance is the prepared version of this very selection, so a
+    # weak match means we fitted the wrong thing; let OCR decide instead.
+    if len(boxes) < 0.75 * min(len(spoken), len(sel_words)):
+        return None
+    return boxes
+
+
+# --------------------------------------------------------------------------
+# Backend 2: OCR
+# --------------------------------------------------------------------------
 
 
 def tess_language(lang: str) -> str:
@@ -210,7 +383,8 @@ def ocr_array(gray, base_y: int, tess_lang: str, stem: Path) -> list[tuple[str, 
 
 def align(spoken, ocr, origin, scale) -> list[dict]:
     """Match the spoken word sequence to the OCR word sequence and return
-    layout-coordinate boxes keyed by the spoken char offsets."""
+    layout-coordinate boxes keyed by the spoken char offsets, tagged with
+    the size of the matching block they came from."""
     matcher = difflib.SequenceMatcher(
         a=[t[2] for t in spoken], b=[t[0] for t in ocr], autojunk=False)
     boxes = []
@@ -219,7 +393,7 @@ def align(spoken, ocr, origin, scale) -> list[dict]:
             start, end, _ = spoken[a + k]
             _, left, top, width, height = ocr[b + k]
             boxes.append({
-                "start": start, "end": end,
+                "start": start, "end": end, "_block": size, "_i": a + k,
                 "x": round(origin[0] + left / scale, 1),
                 "y": round(origin[1] + top / scale, 1),
                 "w": round(width / scale, 1),
@@ -228,9 +402,46 @@ def align(spoken, ocr, origin, scale) -> list[dict]:
     return boxes
 
 
+def drop_outliers(boxes) -> list[dict]:
+    """A word matched on its own (block of one) can be a different instance
+    of the same word elsewhere on screen: exactly the highlight-in-the-
+    wrong-place bug. Keep lone matches only where their neighbours put the
+    reading; runs of two or more words are their own evidence."""
+    anchors = [b for b in boxes if b["_block"] >= 2]
+    if not anchors:
+        return boxes
+    heights = sorted(b["h"] for b in anchors)
+    line_h = max(4.0, heights[len(heights) // 2])
+    kept = []
+    for box in boxes:
+        if box["_block"] >= 2:
+            kept.append(box)
+            continue
+        prev = next((a for a in reversed(anchors) if a["_i"] < box["_i"]), None)
+        nxt = next((a for a in anchors if a["_i"] > box["_i"]), None)
+        ys = [a["y"] for a in (prev, nxt) if a is not None]
+        low, high = min(ys), max(ys)
+        if not low - 1.6 * line_h <= box["y"] <= high + 1.6 * line_h:
+            continue
+        # Same line as a neighbour means the x order must hold too.
+        if prev and abs(box["y"] - prev["y"]) < 0.6 * line_h and box["x"] <= prev["x"]:
+            continue
+        if nxt and abs(box["y"] - nxt["y"]) < 0.6 * line_h and box["x"] >= nxt["x"]:
+            continue
+        kept.append(box)
+    return kept
+
+
+def strip_tags(boxes) -> list[dict]:
+    for box in boxes:
+        box.pop("_block", None)
+        box.pop("_i", None)
+    return boxes
+
+
 def main() -> int:
     args = sys.argv[1:]
-    image = origin = None
+    image = origin = sel_override = None
     scale = 1.0
     while args:
         arg = args.pop(0)
@@ -240,6 +451,8 @@ def main() -> int:
             origin = tuple(float(v) for v in args.pop(0).split(","))
         elif arg == "--scale" and args:
             scale = float(args.pop(0))
+        elif arg == "--selection" and args:
+            sel_override = Path(args.pop(0))
         elif arg in ("-h", "--help"):
             print(__doc__)
             return 0
@@ -284,38 +497,52 @@ def main() -> int:
 
     try:
         try:
-            gray = load_gray(image)
+            arr = load_pnm(image)
         except ImportError:
             return fail("numpy is not available to /usr/bin/python3")
-        if gray is None or gray.size == 0:
+        if arr is None or arr.size == 0:
             return fail("could not read the screenshot")
-        # Dark themes have light text on dark ground; tesseract reads those
-        # far better negated.
-        if gray.mean() < 128:
-            gray = 255 - gray
-        tess_lang = tess_language(lang)
 
+        backend = "ocr"
         boxes = []
-        # Fast path: the selection was usually just made with the mouse, so
-        # look in a band around the cursor first; a fraction of the OCR work
-        # when the window is a full screen of text.
-        if cursor is not None and origin[1] <= cursor[1] <= origin[1] + gray.shape[0] / scale:
-            y0 = int(max(0.0, (cursor[1] - origin[1] - CURSOR_BAND) * scale))
-            y1 = int(min(gray.shape[0], (cursor[1] - origin[1] + CURSOR_BAND) * scale))
-            if y1 - y0 >= 200 and y1 - y0 < gray.shape[0]:
-                t0 = time.time()
-                ocr = ocr_array(gray[y0:y1], y0, tess_lang, image)
-                boxes = align(spoken, ocr, origin, scale)
-                timings["band"] = round(time.time() - t0, 2)
-                if len(boxes) < 0.85 * len(spoken):
-                    boxes = []  # not (fully) near the cursor; scan it all
-        if not boxes:
+        sel_text = read_primary_selection(sel_override)
+        if sel_text.strip():
             t0 = time.time()
-            ocr = ocr_array(gray, 0, tess_lang, image)
-            timings["ocr"] = round(time.time() - t0, 2)
-            if not ocr:
-                return fail("no readable text on screen")
-            boxes = align(spoken, ocr, origin, scale)
+            found = selection_boxes(arr if arr.ndim == 3 else None, sel_text,
+                                    spoken, origin, scale)
+            timings["sel"] = round(time.time() - t0, 2)
+            if found:
+                boxes = found
+                backend = "selection"
+
+        if not boxes:
+            gray = to_gray(arr)
+            # Dark themes have light text on dark ground; tesseract reads
+            # those far better negated.
+            if gray.mean() < 128:
+                gray = 255 - gray
+            tess_lang = tess_language(lang)
+            # Fast path: the selection was usually just made with the mouse,
+            # so look in a band around the cursor first; a fraction of the
+            # OCR work when the window is a full screen of text.
+            if cursor is not None and origin[1] <= cursor[1] <= origin[1] + gray.shape[0] / scale:
+                y0 = int(max(0.0, (cursor[1] - origin[1] - CURSOR_BAND) * scale))
+                y1 = int(min(gray.shape[0], (cursor[1] - origin[1] + CURSOR_BAND) * scale))
+                if y1 - y0 >= 200 and y1 - y0 < gray.shape[0]:
+                    t0 = time.time()
+                    ocr = ocr_array(gray[y0:y1], y0, tess_lang, image)
+                    boxes = drop_outliers(align(spoken, ocr, origin, scale))
+                    timings["band"] = round(time.time() - t0, 2)
+                    if len(boxes) < 0.85 * len(spoken):
+                        boxes = []  # not (fully) near the cursor; scan it all
+            if not boxes:
+                t0 = time.time()
+                ocr = ocr_array(gray, 0, tess_lang, image)
+                timings["ocr"] = round(time.time() - t0, 2)
+                if not ocr:
+                    return fail("no readable text on screen")
+                boxes = drop_outliers(align(spoken, ocr, origin, scale))
+            boxes = strip_tags(boxes)
     finally:
         if shot is not None:
             shot.unlink(missing_ok=True)
@@ -324,8 +551,9 @@ def main() -> int:
     # tiny one means the focused window shows different text.
     if len(boxes) < 8 and len(boxes) / len(spoken) < 0.5:
         return fail(f"text not on screen ({len(boxes)}/{len(spoken)} words matched)")
-    print(json.dumps({"ok": True, "id": utterance.get("id"), "t": timings,
-                      "matched": len(boxes), "total": len(spoken), "boxes": boxes}))
+    print(json.dumps({"ok": True, "id": utterance.get("id"), "backend": backend,
+                      "t": timings, "matched": len(boxes), "total": len(spoken),
+                      "boxes": boxes}))
     return 0
 
 

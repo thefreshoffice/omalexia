@@ -167,18 +167,28 @@ credible published evidence of 8/10 subjective quality in Dutch today.
 Findings from the OpenVINO/NPU/llama.cpp research pass, ranked by
 leverage for the Chatterbox decoder (the RTF 1.9 blocker):
 
-1. Check the single-step decoder first, zero hardware needed. The
-   Chatterbox repo now ships Turbo/Nano variants whose flow-matching
-   decoder runs 1 diffusion step instead of 10. If our exported fp32
-   decoder is doing 10 CFM steps, this is worth more than any hardware
-   port and stacks with everything below.
+1. The single-step decoder is confirmed applicable, zero hardware
+   needed. I inspected our exported conditional_decoder.onnx: the
+   10-step CFM solver is unrolled inline (the same attention module
+   appears as attn1 through attn1_9 in every one of the 12 mid
+   blocks; ~21k of the graph's 24k nodes are the ten estimator
+   passes, the HiFT vocoder is the small remainder). The Chatterbox
+   repo ships Turbo/Nano variants with a 1-step decoder. Cutting 10
+   steps to 1 removes roughly 85% of decoder compute: projected
+   decoder RTF ~0.3, total ~0.75, real time on CPU alone. To verify:
+   whether a single-step decoder exists for (or transfers to) the
+   multilingual speech tokens, or whether we re-export from PyTorch
+   with a distilled few-step schedule.
 2. `pip install onnxruntime-openvino`, point the existing decoder ONNX
    at `OpenVINOExecutionProvider, device_type GPU, precision FP16`.
    Same-day experiment, proven on this model class: Kokoro-Intel got
    ~3x vs CPU on Iris Xe exactly this way. Expect 2-4x if no CPU
-   fallback. Landmines to grep the graph for first: `ScatterNDUpdate`
-   and int64 gather/scatter (killed Kokoro's native GPU port), and
-   STFT-family ops (ISTFT on GPU is fixed only since OpenVINO 2025.2).
+   fallback. I scanned our graph for the documented landmines: it
+   contains 1 STFT and 58 ScatterND nodes (48 sprinkled through the
+   unrolled solver, 10 in the vocoder source module), plus 2
+   RandomNormalLike. So expect the partitioner to split around those;
+   whether the big matmul/conv islands still land on GPU decides the
+   win, and only the experiment answers that. Use OpenVINO >= 2025.2.
    Prerequisite: `omarchy-pkg-add intel-compute-runtime` (sudo).
 3. Full IR conversion (`ov.convert_model`) targeting GPU FP16. The
    official OpenVINO notebooks repo has a CosyVoice 3 conversion

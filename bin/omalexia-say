@@ -5,6 +5,7 @@ Usage:
   omalexia-say [--lang CODE|auto] [--wait] TEXT...   speak the given text
   omalexia-say [--lang ...] -                          speak stdin
   omalexia-say selection                               speak the highlighted text
+  omalexia-say pointer                                 speak from the word under the mouse pointer
   omalexia-say clipboard                               speak the clipboard
   omalexia-say ocr                                     pick a screen region, OCR it, speak it
   omalexia-say toggle                                  stop if speaking, otherwise read the selection
@@ -14,7 +15,8 @@ Usage:
   omalexia-say reload                                  re-read ~/.config/omalexia/config.toml
 
 Everything runs on this machine through omalexia-speakd; nothing is sent
-anywhere. Keys: F10 = toggle, Shift+F10 = clipboard, Ctrl+F10 = screen (OCR).
+anywhere. Keys: F10 = toggle, Alt+F10 = from the pointer, Shift+F10 =
+clipboard, Ctrl+F10 = screen (OCR).
 """
 
 from __future__ import annotations
@@ -275,6 +277,25 @@ def main(argv: list[str]) -> int:
         return speak(get_selection(), lang, wait, quiet, speed)
     if cmd == "selection":
         return speak(get_selection(), lang, wait, quiet, speed)
+    if cmd == "pointer":
+        # "Read from here": the focused window's own text (terminal grid or
+        # accessibility tree) from the word under the pointer onward. The
+        # same source feeds the highlighter, so the marker starts right at
+        # that word.
+        locate = Path.home() / ".local" / "bin" / "omalexia-locate"
+        tool = str(locate) if locate.exists() else "omalexia-locate"
+        try:
+            r = subprocess.run([tool, "--grab"], capture_output=True, text=True, timeout=15)
+            data = json.loads(r.stdout or "{}")
+        except (OSError, ValueError, subprocess.TimeoutExpired):
+            data = {}
+        text = data.get("text") if data.get("ok") else ""
+        if not text:
+            notify("Nothing to read here",
+                   str(data.get("error") or "Point at some text, then press Alt+F10."),
+                   GLYPH_WARN)
+            return 1
+        return speak(text, lang, wait, quiet, speed)
     if cmd == "clipboard":
         return speak(get_clipboard(), lang, wait, quiet, speed)
     if cmd == "ocr":

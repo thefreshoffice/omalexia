@@ -27,6 +27,7 @@ Omalexia keys: F9 = talk, F10 = listen
 
   Listen
     F10                 read the highlighted text aloud; press again to stop
+    Alt + F10           read from the word under the mouse pointer onward
     Shift + F10         read the clipboard
     Ctrl + F10          draw a box on the screen, read what is in it (OCR)
     Super + F10         read faster        Super + Shift + F10   read slower

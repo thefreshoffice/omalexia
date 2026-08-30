@@ -431,7 +431,7 @@ def set_value(key: str, value: str) -> None:
 
 def do_action(action: str, arg: str = "") -> None:
     say = tool("omalexia-say")
-    if action in ("selection", "clipboard", "ocr", "stop", "toggle"):
+    if action in ("selection", "pointer", "clipboard", "ocr", "stop", "toggle"):
         detached([say, action])
     elif action == "test":
         detached([tool("omalexia-voice"), "test", arg or "en"])
@@ -467,8 +467,8 @@ def main(argv: list[str]) -> int:
         set_value(argv[1], argv[2])
     elif len(argv) >= 2 and argv[0] == "do":
         do_action(argv[1], argv[2] if len(argv) > 2 else "")
-        if argv[1] in ("selection", "clipboard", "ocr", "stop", "toggle", "dictate", "dictate-cancel", "test",
-                       "reading-mode"):
+        if argv[1] in ("selection", "pointer", "clipboard", "ocr", "stop", "toggle", "dictate", "dictate-cancel",
+                       "test", "reading-mode"):
             # Fire-and-forget actions: no need to re-read everything.
             print(json.dumps({"ok": True}))
             return 0

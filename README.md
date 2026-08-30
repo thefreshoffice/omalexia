@@ -67,6 +67,11 @@ markdown symbols, bullets and `#` headings, and reads URLs as their host
 name. F10 uses the Wayland primary selection (whatever is highlighted); for
 the rare app that does not publish one it sends `Ctrl+C` and restores the
 clipboard afterwards, never in a terminal, where `Ctrl+C` means interrupt.
+Alt+F10 needs no selection at all: point the mouse at a word and the
+reading starts there and continues onward. The text comes from the window
+itself (the terminal's grid or the app's accessibility tree), the same
+source the highlighter uses, so the marker starts on the exact word under
+the pointer.
 
 **It works everywhere** because it is also the system voice: the installer
 registers the daemon as the default [Speech Dispatcher](https://wiki.archlinux.org/title/Speech_dispatcher)

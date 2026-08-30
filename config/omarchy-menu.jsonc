@@ -2,6 +2,7 @@
   "omalexia": {"icon":"󰗊","label":"Omalexia","aliases":["read","reading","dyslexia","accessibility","a11y"]},
   "omalexia.read": {"icon":"󰕾","label":"Read Aloud"},
   "omalexia.read.selection": {"icon":"󰗊","label":"Read Selection  (F10)","action":"omalexia-say selection"},
+  "omalexia.read.pointer": {"icon":"󰇀","label":"Read From Here  (Alt+F10)","action":"omalexia-say pointer"},
   "omalexia.read.clipboard": {"icon":"","label":"Read Clipboard  (Shift+F10)","action":"omalexia-say clipboard"},
   "omalexia.read.screen": {"icon":"󰴑","label":"Read Screen Region  (Ctrl+F10)","action":"omalexia-say ocr"},
   "omalexia.read.stop": {"icon":"󰝛","label":"Stop Reading","when":"[[ $(cat \"$XDG_RUNTIME_DIR/omalexia/state\" 2>/dev/null) == speaking ]]","action":"omalexia-say stop"},

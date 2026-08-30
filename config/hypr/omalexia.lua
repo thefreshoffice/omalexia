@@ -27,6 +27,7 @@ end
 
 -- F10: read the highlighted text; press again to stop.
 o.bind("F10", "Read selection aloud / stop", bin .. "omalexia-say toggle")
+o.bind("ALT + F10", "Read from the pointer onward", bin .. "omalexia-say pointer")
 o.bind("SHIFT + F10", "Read clipboard aloud", bin .. "omalexia-say clipboard")
 o.bind("CTRL + F10", "Read screen region aloud (OCR)", bin .. "omalexia-say ocr")
 o.bind("SUPER + F10", "Read faster", bin .. "omalexia-say speed up")

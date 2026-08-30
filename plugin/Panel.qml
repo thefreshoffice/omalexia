@@ -67,7 +67,7 @@ Panel {
   function actionHasCursor(key, index) { return hasCursor(key) && actionIndex === index }
 
   function actionCount(key) {
-    if (key === "read.actions") return 4
+    if (key === "read.actions") return 5
     if (key === "read.test") return 2
     if (key === "dict.actions") return 4
     if (key === "footer") return 3
@@ -149,8 +149,9 @@ Panel {
     case "install": omalexia.act("install"); break
     case "read.actions":
       if (actionIndex === 0) omalexia.readSelection()
-      else if (actionIndex === 1) omalexia.readClipboard()
-      else if (actionIndex === 2) { root.close(); omalexia.readScreen() }
+      else if (actionIndex === 1) { root.close(); omalexia.act("pointer") }
+      else if (actionIndex === 2) omalexia.readClipboard()
+      else if (actionIndex === 3) { root.close(); omalexia.readScreen() }
       else omalexia.stopReading()
       break
     case "read.test":
@@ -456,14 +457,16 @@ Panel {
               uniform: true
               buttons: [
                 { icon: "󰗊", text: "Selection", tip: "Read the highlighted text (F10)" },
+                { icon: "󰇀", text: "From here", tip: "Read from the word under the mouse pointer (Alt+F10)" },
                 { icon: "󰅍", text: "Clipboard", tip: "Read the clipboard (Shift+F10)" },
                 { icon: "󰴑", text: "Screen", tip: "Draw a box and read what is in it (Ctrl+F10)" },
                 { icon: "󰝛", text: "Stop", tip: "Stop reading", enabled: omalexia.speaking }
               ]
               onTriggered: function(index) {
                 if (index === 0) omalexia.readSelection()
-                else if (index === 1) omalexia.readClipboard()
-                else if (index === 2) { root.close(); omalexia.readScreen() }
+                else if (index === 1) { root.close(); omalexia.act("pointer") }
+                else if (index === 2) omalexia.readClipboard()
+                else if (index === 3) { root.close(); omalexia.readScreen() }
                 else omalexia.stopReading()
               }
             }

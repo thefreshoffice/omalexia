@@ -280,8 +280,8 @@ def foot_pad():
     return 0.0, 0.0
 
 
-def foot_grid_words(window):
-    """(norm, x, y, w, h) image-pixel words of a foot window's visible text,
+def _foot_pipe(window):
+    """The visible text and grid geometry of a foot window (image pixels),
     or None when this is not a foot window or the binding is missing."""
     pid = window.get("pid")
     if not pid:
@@ -334,9 +334,20 @@ def foot_grid_words(window):
     cell_h = (window["h"] * scale - 2 * pad_y) / rows
     if cell_w <= 2 or cell_h <= 4:
         return None
+    return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
+            "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h}
+
+
+def foot_grid_words(window):
+    """(norm, x, y, w, h, original) image-pixel words of a foot window's
+    visible text, or None."""
+    grid = _foot_pipe(window)
+    if grid is None:
+        return None
+    cols, cell_w, cell_h = grid["cols"], grid["cell_w"], grid["cell_h"]
     words = []
     row = 0
-    for line in lines:
+    for line in grid["lines"]:
         # foot pipes logical lines; longer ones wrap at the column count.
         for m in re.finditer(r"\S+", line):
             folded = norm(m.group())
@@ -344,11 +355,63 @@ def foot_grid_words(window):
                 continue
             row_offset, col = divmod(m.start(), cols)
             width_chars = min(m.end() - m.start(), cols - col)
-            words.append((folded, pad_x + col * cell_w,
-                          pad_y + (row + row_offset) * cell_h,
-                          width_chars * cell_w, cell_h))
+            words.append((folded, grid["pad_x"] + col * cell_w,
+                          grid["pad_y"] + (row + row_offset) * cell_h,
+                          width_chars * cell_w, cell_h, m.group()))
         row += max(1, -(-len(line) // cols))
     return words or None
+
+
+def grab_text(window, cursor):
+    """The window's own text from the word under the pointer onward: the
+    'read from here' source. Returns (text, source) or (None, reason).
+    Reuses the exact backends, so the highlighter will find every word."""
+    px = (cursor[0] - window["x"]) * window["scale"]
+    py = (cursor[1] - window["y"]) * window["scale"]
+    grid = _foot_pipe(window)
+    if grid is not None:
+        col = int(max(0, min(grid["cols"] - 1, (px - grid["pad_x"]) // grid["cell_w"])))
+        vrow = int((py - grid["pad_y"]) // grid["cell_h"])
+        row = 0
+        for i, line in enumerate(grid["lines"]):
+            span = max(1, -(-len(line) // grid["cols"]))
+            if vrow < row + span:
+                idx = min((vrow - row) * grid["cols"] + col, len(line))
+                while idx > 0 and not line[idx - 1].isspace():
+                    idx -= 1
+                parts = [line[idx:]] + grid["lines"][i + 1:]
+                text = "\n".join(parts).strip()
+                if text:
+                    return text, "grid"
+                return None, "nothing under the pointer"
+            row += span
+        return None, "the pointer is below the text"
+    # The tree can still be building (Chromium fills it in asynchronously
+    # once an assistive client shows up); a user-initiated grab can afford
+    # a few patient attempts.
+    words = None
+    for attempt in range(3):
+        words = tree_words(window)
+        if words:
+            break
+        time.sleep(0.8)
+    if words:
+        best = None
+        for i, word in enumerate(words):
+            if len(word) < 6:
+                continue
+            _, x, y, w, h = word[0], word[1], word[2], word[3], word[4]
+            dy = 0.0 if y <= py <= y + h else min(abs(py - y), abs(py - y - h))
+            dx = 0.0 if x <= px <= x + w else min(abs(px - x), abs(px - x - w))
+            distance = dy * 3 + dx
+            if best is None or distance < best[0]:
+                best = (distance, i)
+        if best is not None and best[0] < 220:
+            text = " ".join(word[5] for word in words[best[1]:] if len(word) >= 6)
+            if text.strip():
+                return text.strip(), "tree"
+        return None, "no text near the pointer"
+    return None, "this window does not offer its text"
 
 
 # --------------------------------------------------------------------------
@@ -404,7 +467,11 @@ def _atspi_poke(node, depth=0):
         _atspi_poke(node.get_child_at_index(j), depth + 1)
 
 
-def _atspi_frame(Atspi, app, title):
+def _atspi_frame(Atspi, app, window):
+    """The frame of `window` among the app's toplevels: the ACTIVE one,
+    else a title match, else the one whose size matches the window (an app
+    can hold many windows and only the right one has a built tree)."""
+    title = window.get("title")
     frames = []
     try:
         count = app.get_child_count()
@@ -426,6 +493,15 @@ def _atspi_frame(Atspi, app, title):
                 return frame
         except Exception:  # noqa: BLE001
             continue
+    for frame in frames:
+        try:
+            e = Atspi.Component.get_extents(frame, Atspi.CoordType.WINDOW)
+            for units in (1.0, window["scale"]):
+                if (abs(e.width - window["w"] * units) <= 4
+                        and abs(e.height - window["h"] * units) <= 4):
+                    return frame
+        except Exception:  # noqa: BLE001
+            continue
     return frames[0] if frames else None
 
 
@@ -440,21 +516,28 @@ def _node_words(Atspi, node, extents):
     if not text.strip():
         return []
     lines = []
-    off = 0
-    for _ in range(400):
-        if off >= n:
-            break
-        got = Atspi.Text.get_string_at_offset(node, off, Atspi.TextGranularity.LINE)
-        if got is None or got.end_offset <= off:
-            break
-        lines.append((got.start_offset, got.end_offset))
-        off = got.end_offset
+    try:
+        off = 0
+        for _ in range(400):
+            if off >= n:
+                break
+            got = Atspi.Text.get_string_at_offset(node, off, Atspi.TextGranularity.LINE)
+            if got is None or got.end_offset <= off:
+                break
+            lines.append((got.start_offset, got.end_offset))
+            off = got.end_offset
+    except Exception:  # noqa: BLE001
+        # A flaky line query must not discard the node: its box is still
+        # the best geometry there is; treat the text as one line.
+        lines = []
     if not lines:
         lines = [(0, n)]
     x, y, w, h = extents
     line_h = h / len(lines)
     longest = max(max(le - ls, 1) for ls, le in lines)
-    char_w = w / longest
+    # A block node is wider than its text ink; a glyph is never much wider
+    # than the line is tall, so cap the estimate.
+    char_w = min(w / longest, line_h * 0.62)
     words = []
     for i, (ls, le) in enumerate(lines):
         segment = text[ls:le]
@@ -473,7 +556,7 @@ def _node_words(Atspi, node, extents):
             if box is None:
                 box = (x + m.start() * char_w, y + i * line_h,
                        max(char_w, (m.end() - m.start()) * char_w), line_h)
-            words.append((folded, *box))
+            words.append((folded, *box, m.group()))
     return words
 
 
@@ -485,83 +568,69 @@ def tree_words(window):
     if Atspi is None or not pid:
         return None
 
-    saw_document = [False]
+    # Units are mixed PER NODE inside one application: web content (inside
+    # a document subtree) reports physical device pixels, while the same
+    # app's own chrome, and whole GTK and Qt apps, report logical ones.
+    # Resolve by ancestry while walking.
+    logical_units = window["scale"] if window["scale"] > 1.01 else 1.0
 
     def collect(root, deadline):
         visited = [0]
 
-        def walk(node, depth):
+        def walk(node, depth, in_document):
             if node is None or depth > 40 or visited[0] > 4000 or time.time() > deadline:
                 return []
             visited[0] += 1
-            if depth <= 6 and not saw_document[0]:
-                try:
-                    if node.get_role_name().startswith("document"):
-                        saw_document[0] = True
-                except Exception:  # noqa: BLE001
-                    pass
             got = []
             try:
                 count = node.get_child_count()
             except Exception:  # noqa: BLE001
                 return []
+            if count > 0 and not in_document:
+                try:
+                    in_document = node.get_role_name().startswith("document")
+                except Exception:  # noqa: BLE001
+                    pass
             for j in range(min(count, 150)):
-                got += walk(node.get_child_at_index(j), depth + 1)
+                got += walk(node.get_child_at_index(j), depth + 1, in_document)
             if got:
                 return got
             if not isinstance(node, Atspi.Text):
                 return []
             try:
-                state = node.get_state_set()
-                if not state.contains(Atspi.StateType.SHOWING):
-                    return []
+                # No SHOWING check: Chromium populates states asynchronously
+                # after building the tree, and an early walk would reject
+                # perfectly visible text. The box is ready immediately and
+                # zero-sized boxes already filter what is not rendered.
                 e = Atspi.Component.get_extents(node, Atspi.CoordType.WINDOW)
             except Exception:  # noqa: BLE001
                 return []
             if e.width <= 2 or e.height <= 2:
                 return []
+            units = 1.0 if in_document else logical_units
             try:
-                return _node_words(Atspi, node, (float(e.x), float(e.y),
-                                                 float(e.width), float(e.height)))
+                return _node_words(Atspi, node, (e.x * units, e.y * units,
+                                                 e.width * units, e.height * units))
             except Exception:  # noqa: BLE001
                 return []
-        return walk(root, 0)
+        return walk(root, 0, False)
 
     try:
         app = _atspi_app(Atspi, pid)
         if app is None:
             return None
-        root = _atspi_frame(Atspi, app, window.get("title"))
+        root = _atspi_frame(Atspi, app, window)
         if root is None:
             return None
         raw = collect(root, time.time() + 2.0)
         if not raw:
             _atspi_poke(app)
-            time.sleep(0.5)
-            root = _atspi_frame(Atspi, app, window.get("title"))
+            time.sleep(0.9)
+            root = _atspi_frame(Atspi, app, window)
             raw = collect(root, time.time() + 2.5) if root is not None else []
         if not raw:
             return None
-        # Toolkits differ on units: web content (a document node exists)
-        # reports physical device pixels, native GTK and Qt report logical
-        # ones. Measured here: Chromium's content is physical while its own
-        # frame claims logical, so the frame cannot be trusted as reference.
-        scale = window["scale"]
-        factor = 1.0 if saw_document[0] or scale <= 1.01 else scale
-
-        def outside(fct):
-            physical_w = window["w"] * scale + 4
-            physical_h = window["h"] * scale + 4
-            bad = sum(1 for _, x, y, w, h in raw
-                      if (x + w) * fct > physical_w or (y + h) * fct > physical_h)
-            return bad / max(1, len(raw))
-
-        if outside(factor) > 0.2:
-            alternative = scale if factor == 1.0 else 1.0
-            if outside(alternative) < outside(factor):
-                factor = alternative
-        return [(t, x * factor, y * factor, w * factor, h * factor)
-                for t, x, y, w, h in raw]
+        return raw
     except Exception:  # noqa: BLE001
         return None
 
@@ -841,10 +910,10 @@ def align(spoken, ocr) -> list[dict]:
     for a, b, size in matcher.get_matching_blocks():
         for k in range(size):
             start, end, _ = spoken[a + k]
-            _, left, top, width, height = ocr[b + k]
+            word = ocr[b + k]  # (norm, x, y, w, h[, original text])
             boxes.append({"start": start, "end": end, "_block": size, "_i": a + k,
-                          "x": round(left, 1), "y": round(top, 1),
-                          "w": round(width, 1), "h": round(height, 1)})
+                          "x": round(word[1], 1), "y": round(word[2], 1),
+                          "w": round(word[3], 1), "h": round(word[4], 1)})
     return boxes
 
 
@@ -984,6 +1053,15 @@ def acquire(arr, window, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr,
         timings["tree"] = round(time.time() - t0, 2)
         if tree:
             boxes = strip_tags(drop_outliers(align(spoken, tree)))
+            # Chromium fills its tree in asynchronously; a weak match is
+            # often just an early snapshot, so look once more.
+            if len(boxes) < 0.7 * len(spoken):
+                time.sleep(0.6)
+                again = tree_words(window)
+                if again:
+                    retry = strip_tags(drop_outliers(align(spoken, again)))
+                    if len(retry) > len(boxes):
+                        boxes = retry
             if len(boxes) >= 8 or len(boxes) / max(1, len(spoken)) >= 0.5:
                 return fill_gaps(boxes, spoken), "tree"
     if sel_text.strip():
@@ -1134,6 +1212,11 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
             if words:
                 grid_misses = 0
                 boxes2 = fill_gaps(strip_tags(drop_outliers(align(spoken, words))), spoken)
+                if backend == "tree" and len(boxes2) < 0.8 * len(img_boxes):
+                    # An asynchronously thinner tree snapshot is noise, not
+                    # a change; keep the standing boxes.
+                    calm += 1
+                    continue
                 if len(boxes2) >= 8 or len(boxes2) / max(1, len(spoken)) >= 0.5:
                     if boxes2 != img_boxes:
                         calm = 0
@@ -1231,6 +1314,25 @@ def main() -> int:
             sel_override = Path(args.pop(0))
         elif arg == "--follow":
             following = True
+        elif arg == "--grab":
+            # "Read from here": print the focused window's own text from
+            # the word under the pointer onward, and touch nothing else.
+            # --at X,Y (testing) stands in for the pointer position.
+            override = None
+            if args and args[0] == "--at" and len(args) >= 2:
+                args.pop(0)
+                override = tuple(float(v) for v in args.pop(0).split(","))
+            window = focused_window()
+            cursor = override or cursor_pos()
+            if window is None or cursor is None:
+                print(json.dumps({"ok": False, "error": "no focused window"}))
+                return 0
+            text, source = grab_text(window, cursor)
+            if text:
+                print(json.dumps({"ok": True, "source": source, "text": text}))
+            else:
+                print(json.dumps({"ok": False, "error": source}))
+            return 0
         elif arg in ("-h", "--help"):
             print(__doc__)
             return 0

@@ -268,6 +268,40 @@ The spike samples got their first native listening pass:
   as the preferred Dutch voices while a successor lands.
 - Chatterbox: no verdict given yet (samples nl-1/nl-2.wav).
 
+## Measured performance on this machine (2026-08-31)
+
+Protocol: idle machine, one engine at a time, the same three Dutch
+texts (short sentence ~3 s, medium ~4 s, paragraph ~8 s of audio),
+warm model unless noted. Piper and Supertonic report best of two
+passes; the heavier engines a single pass. RTF below 1.0 is faster
+than real time.
+
+| Engine | Load | Peak RAM | RTF kort / middel / alinea |
+| --- | --- | --- | --- |
+| Piper nl_BE-nathalie | per call | 253 MB | 0.43 / 0.29 / 0.20 |
+| Supertonic 3 (F1) | 1.0 s | 560 MB | 0.94 / 0.66 / 0.42 |
+| Chatterbox q4 + fp32 decoder | 34 s | 2.0 GB | 3.19 / 2.81 / 2.46 |
+| OmniVoice, 16 steps | 1.1 s | 2.9 GB | 40.4 / 45.0 / 13.8 |
+| OmniVoice, 32 steps | 1.1 s | 2.9 GB | 65.7 (kort only) |
+| VoxCPM2 (bf16 torch) | 370 s first run | ~5.9 GB | 93 / 41 / 36 |
+
+Notes:
+- Piper's wall time includes reloading the model every call (CLI); it
+  stays the latency and footprint king.
+- Supertonic is real time across the board with a 1 s cold start and
+  a footprint the daemon can keep resident. Its SDK is not streaming,
+  but at RTF < 1 sentence-level pipelining with the existing 1.5 s
+  pre-buffer works as-is.
+- Chatterbox splits as LM ~0.7 RTF, decoder ~1.7-2.4 RTF, confirming
+  the decoder diagnosis. Applying the 1-step decoder arithmetic to
+  the paragraph run projects roughly RTF 1.0, borderline real time on
+  CPU before any iGPU work.
+- OmniVoice on CPU is disqualified at any step count, though its
+  non-autoregressive design amortizes on longer text (13.8 on the
+  paragraph). The Arc XPU experiment is its only viable local route.
+- VoxCPM2's first two spike sentences ran contended; the paragraph
+  (RTF 36) was mostly solo. Rejected on sound anyway.
+
 ## Shortlist and spike plan
 
 The bar is >8/10 per language. Updated after the listening verdict

@@ -95,9 +95,9 @@ repos themselves. "CPU here" means a realistic path on this machine.
 | Model | Langs | Weights license | Size | CPU here | Verdict |
 | --- | --- | --- | --- | --- | --- |
 | Chatterbox Multilingual V3 | 23 | MIT | 0.5B LM + decoder, 3.2 GB | RTF 2.4 measured; fixable (below) | lead candidate |
-| Supertonic 3 (Supertone) | 31 | OpenRAIL-M, commercial OK | 99M, 398 MB ONNX | yes: RTF 0.36-0.73 measured here | spiked, awaiting listening |
-| VoxCPM2 (OpenBMB) | 30 | Apache-2.0 | 2B | GGUF path RTF ~1.76 on M4 Pro, not real time | spike if quality earns it |
-| OmniVoice (k2-fsa) | 646 | CC-BY-NC (code Apache) | 0.6B | unverified; GPU RTF 0.025 | quality-test via demo first |
+| Supertonic 3 (Supertone) | 31 | OpenRAIL-M, commercial OK | 99M, 398 MB ONNX | yes: RTF 0.36-0.73 measured here | listener: very good; front-runner |
+| VoxCPM2 (OpenBMB) | 30 | Apache-2.0 | 2B | no: RTF 36-93 measured (torch CPU) | listener rejected; out |
+| OmniVoice (k2-fsa) | 646 | CC-BY-NC (code Apache) | 0.6B | no: RTF 50-70 measured; XPU is the route | listener: very good; needs Arc XPU |
 | OpenAudio S1-mini (Fish) | 13 | CC-BY-NC-SA | 0.5B | no (broken CPU path) | skip |
 | ZONOS2 (Zyphra, 2026-06) | 34, nl Tier 2 | MIT or Apache (sources conflict) | 8B MoE, 15.3 GB | no, NVIDIA-only; 1/20 realtime on 8 GB GPU | skip on this machine |
 | OuteTTS 1.0 1B | 23, nl high tier | CC-BY-NC-SA + Llama | 2.5 GB | yes, llama.cpp first-class | risky: arena report of altered/omitted words |
@@ -253,41 +253,50 @@ deployable engine. Kyutai Pocket TTS releasing its training code
 (August 2026) makes a CPU-native 100M model a realistic future
 finetune target too.
 
+## Listening verdict (2026-08-31, household, Dutch)
+
+The spike samples got their first native listening pass:
+
+- Supertonic 3: very good. Combined with measured real-time CPU
+  synthesis, this is the front-runner for integration.
+- OmniVoice: very good. Sound quality justifies the acceleration
+  work; CPU is measured hopeless (RTF 50-70), so its path is the Arc
+  iGPU via the officially supported PyTorch XPU backend.
+- VoxCPM2: rejected on sound. Also measured RTF 36-93 on CPU. Out.
+- Piper: "mid" for nl_NL; the Flemish nl_BE voices are better, which
+  matches the community record. Stays the fallback tier, with nl_BE
+  as the preferred Dutch voices while a successor lands.
+- Chatterbox: no verdict given yet (samples nl-1/nl-2.wav).
+
 ## Shortlist and spike plan
 
-The bar is >8/10 per language. Nothing ships that for Dutch today, so
-the plan is: measure the closest adoptable candidates on this machine,
-fix the Chatterbox speed problem in parallel, and keep the finetune
-path warm as the fallback.
+The bar is >8/10 per language. Updated after the listening verdict
+and the on-machine measurements:
 
-0. Zero-cost Piper win, prepared: the community's best-rated open
-   Dutch voices are the two Flemish ones, nl_BE-nathalie and
-   nl_BE-rdh (rdh now downloaded next to nathalie). Rendered the same
-   three sentences with pim, nathalie and rdh:
-   `~/.local/share/omalexia/spike/piper-nl-*-*.wav`.
-1. Listening verdict (blocked on the household): the two Chatterbox
-   Dutch samples, `pw-play ~/.local/share/omalexia/spike/nl-1.wav`.
-   This decides whether the acceleration work is worth doing at all.
-2. Supertonic 3 spike: DONE on this machine. 8 preset voices, Dutch
-   synthesis at RTF 0.36-0.73 on CPU (pypi SDK, ONNX, 8 flow steps,
-   ~260 MB download). Six samples await the same listening test:
-   `pw-play ~/.local/share/omalexia/spike/st3-nl-1-f1.wav` (also -2,
-   -3, and m1 variants). If its Dutch is even "7", it wins on
-   deployment cost immediately. Caveat to note in the verdict: the
-   open repo is being archived (frozen, still downloadable).
-3. Chatterbox decoder, in order: check steps/Turbo variant (accel
-   finding 1), then onnxruntime-openvino GPU FP16 (finding 2, needs
-   `omarchy-pkg-add intel-compute-runtime`, sudo, user-run).
-4. Quality-screen the remaining Dutch candidates cheaply, demos or
-   short local runs, no engineering: OmniVoice (646 languages would
-   collapse the per-language problem if Dutch is good; weights NC,
-   fine for household use), VoxCPM2 (Apache, GGUF path), OuteTTS 1.0.
-   Only invest integration work in whichever survives listening.
-5. If nothing adopted clears 8 for Dutch: the CML-TTS + curated-voice
-   finetune, backbone chosen from what listened best (Chatterbox
-   finetune vs Pocket TTS once its training code and, ideally, Dutch
-   land). Evaluate Parkiet before starting from scratch.
-6. Keep for the rest of Europe: German, French, Spanish, Italian,
-   Polish are all realistically >8 with Chatterbox or successors, so
-   whatever wins for Dutch likely covers them; verify per language
-   with the same listening protocol instead of trusting tier labels.
+1. Integrate Supertonic 3 behind omalexia-speakd as a selectable
+   engine for its 31 languages (Dutch first): real-time on CPU today,
+   99M params, commercial-friendly OpenRAIL-M. Mirror the Piper
+   integration shape (offline ONNX, per-language voice choice).
+   Caveat recorded: the upstream open repo is frozen (archived), so
+   pin the assets we have.
+2. OmniVoice on the Arc iGPU: install `omarchy-pkg-add
+   intel-compute-runtime` (sudo, user-run), then PyTorch XPU wheels
+   in the spike venv, `device_map="xpu"`. OmniVoice documents Intel
+   Arc support explicitly (tested on A310/B50 by upstream). If RTF
+   lands under ~0.5, its 646 languages collapse the per-language
+   problem in one engine; weights are CC-BY-NC, fine for household
+   use, flagged for any commercial future.
+3. Chatterbox: get the missing listening verdict (nl-1/nl-2.wav).
+   Only if it wins on sound does the decoder acceleration work
+   (single-step Turbo variant, then onnxruntime-openvino GPU FP16)
+   stay on the roadmap; Supertonic being both good and fast lowers
+   its priority.
+4. Ruled out by listening or measurement: VoxCPM2 (sound + speed),
+   OpenAudio S1 (broken CPU path), ZONOS2/Voxtral/Parkiet (hardware),
+   OuteTTS (word-accuracy reports), MMS/XTTS (quality/license).
+5. If no adopted engine clears 8 for Dutch: the CML-TTS +
+   curated-voice finetune path, and watch Kyutai Pocket TTS (training
+   code open since 2026-08-25, Dutch not yet shipped).
+6. Rest of Europe: whatever wins for Dutch likely covers German,
+   French, Spanish, Italian and Polish; verify per language with the
+   same listening protocol instead of trusting tier labels.

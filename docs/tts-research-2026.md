@@ -1,0 +1,264 @@
+# Multilingual TTS above 8/10, local first (research, 2026-08-30)
+
+The goal: reading voices that a listener would rate above 8 out of 10 in
+as many languages as possible, running on this machine, local first.
+Dutch is the first target (the household language Kokoro does not
+speak), then German, French, Spanish, Italian, Polish and the rest of
+Europe. Cloud is out of scope except as a quality reference.
+
+## The machine
+
+- Intel Core Ultra 7 255H (Arrow Lake-H), 16 threads, 30 GB RAM.
+- Intel Arc Pro 130T/140T iGPU (Xe, `renderD128`).
+- Intel NPU, Core Ultra 200H series (`intel_vpu`, `/dev/accel/accel0`).
+- Installed today: onnxruntime 1.29 CPU-only. NOT installed: OpenVINO,
+  intel-compute-runtime, Level Zero. Any GPU/NPU work starts with
+  `omarchy-pkg-add intel-compute-runtime` (sudo) and `pip install
+  openvino` (no sudo).
+
+## Where the stack stands (measured on this machine)
+
+- Piper medium voices: ~45 languages, RTF 0.05, start 0.08-0.13 s.
+  Reliable, flat prosody; subjective quality around 5-6. The outside
+  ranking below scores Piper 4.5, which matches the household verdict
+  for Dutch (pim-medium is understandable, not pleasant).
+- Kokoro-82M: 8 languages (en es fr hi it ja pt zh), first word ~0.8 s,
+  RTF ~0.3 on CPU. The blog scores it 7.0; the household experience for
+  English is better than that. No Dutch, and the model is not trainable
+  on new languages without the (closed) recipe.
+- Chatterbox Multilingual, ONNX export already on disk (1.7 GB):
+  MIT license, 23 languages confirmed from the model card: ar da de el
+  en es fi fr he hi it ja ko ms nl no pl pt ru sv sw tr zh; that is
+  the broadest European coverage of any high-quality open model
+  (Dutch, Danish, German, Greek, Finnish, Norwegian, Polish, Swedish
+  and Turkish are all absent from Kokoro). Measured here: quantized LM
+  (354 MB q4) at RTF 0.45 on CPU; the fp32 flow-matching conditional
+  decoder (534 MB) is the blocker at RTF 1.9 (total 2.4). That single
+  file is the acceleration target. Two Dutch samples still await a
+  listening verdict: `pw-play ~/.local/share/omalexia/spike/nl-1.wav`.
+
+## The OpenVox frame (starting point, unverified)
+
+The user-supplied article (openvoxai.com, "Best TTS models 2026") ranks
+24 local models. Its local candidates at quality >= 7.5, as claimed:
+
+| Claimed | Model | Langs | License claim | Note |
+| --- | --- | --- | --- | --- |
+| 8.5 | Higgs Audio v3 | 100 | non-commercial | heavy, research |
+| 8.5 | Qwen3 TTS | 9 | Apache | weights availability to verify |
+| 8.4 | "OmniVoice" | 646 | Apache | OpenVox's own; verify what it is |
+| 8.3 | Fish Speech / OpenAudio | 13 | non-commercial | |
+| 8.0 | Chatterbox | 23 | MIT | already spiked here, has Dutch |
+| 8.0 | CosyVoice 3 | 9 | Apache | streaming |
+| 8.0 | IndexTTS 2.5 | 4 | non-commercial | |
+| 8.0 | Dia | 1 (en) | Apache | dialogue only |
+| 8.0 | VibeVoice | 2 | MIT | long-form |
+| 7.8 | Orpheus TTS | 8 | Apache/Llama | LLM-based |
+| 7.6 | Spark-TTS | 2 | Apache | zh/en |
+| 7.5 | StyleTTS 2 | 14 | MIT | Kokoro's ancestor |
+| 7.5 | F5-TTS | 2 (+finetunes) | code MIT, weights NC | |
+| 7.5 | GPT-SoVITS | 5 | MIT | |
+
+Caveats: the article is vendor content (OpenVox tags its own supported
+models, and its in-house "OmniVoice" lands at #2); its quality numbers
+are not per-language, and multilingual models are routinely much weaker
+outside English and Chinese. Everything below replaces these claims
+with verified data.
+
+## What verification did to the blog's claims
+
+- "OmniVoice by OpenVox, 646 languages, Apache, 8.4" is three-quarters
+  wrong. The model is real: k2-fsa/OmniVoice, from Daniel Povey's
+  Next-gen Kaldi group (arXiv:2604.00688), genuinely 646 languages, and
+  Dutch is in the list with 2,264 hours of training data. But OpenVox
+  did not make it (they are a Mac app that bundles it), the 8.4 is
+  OpenVox's own self-published score, and the weights are CC-BY-NC, not
+  Apache (only the code is Apache-2.0). The audio tokenizer (from Higgs
+  Audio) needed a separate license correction after a community report.
+- Qwen3-TTS is genuinely open (Apache-2.0 weights on HF, 0.6B and 1.7B,
+  released 2026-01-22) but supports 10 languages and Dutch is not one.
+- Higgs Audio "8.5, 100 languages": v2 lists only en/zh/de/ko; the
+  "100+ languages" claim belongs to v3, which has no published language
+  list and a research/non-commercial license. Needs 24 GB+ GPU. Out.
+- Fish Speech/OpenAudio: Dutch is confirmed on the S1/S1-mini model
+  card, but the actual paper's training-data description never mentions
+  Dutch, the weights are non-commercial, and CPU inference is broken in
+  practice (documented core-underutilization issue).
+- CosyVoice 3: the downloadable model is the 0.5B "Fun-CosyVoice3", not
+  the 1.5B the paper's quality claims describe. 9 languages, no Dutch.
+
+## Verified model matrix (Dutch-capable models only)
+
+Every row verified from model cards, LICENSE files, papers or the
+repos themselves. "CPU here" means a realistic path on this machine.
+
+| Model | Langs | Weights license | Size | CPU here | Verdict |
+| --- | --- | --- | --- | --- | --- |
+| Chatterbox Multilingual V3 | 23 | MIT | 0.5B LM + decoder, 3.2 GB | RTF 2.4 measured; fixable (below) | lead candidate |
+| Supertonic 3 (Supertone) | 31 | OpenRAIL-M, commercial OK | 99M, 398 MB ONNX | yes: 0.3 RTF on an e-reader | spike now |
+| VoxCPM2 (OpenBMB) | 30 | Apache-2.0 | 2B | GGUF path RTF ~1.76 on M4 Pro, not real time | spike if quality earns it |
+| OmniVoice (k2-fsa) | 646 | CC-BY-NC (code Apache) | 0.6B | unverified; GPU RTF 0.025 | quality-test via demo first |
+| OpenAudio S1-mini (Fish) | 13 | CC-BY-NC-SA | 0.5B | no (broken CPU path) | skip |
+| ZONOS2 (Zyphra, 2026-06) | 34, nl Tier 2 | MIT or Apache (sources conflict) | 8B MoE, 15.3 GB | no, NVIDIA-only; 1/20 realtime on 8 GB GPU | skip on this machine |
+| OuteTTS 1.0 1B | 23, nl high tier | CC-BY-NC-SA + Llama | 2.5 GB | yes, llama.cpp first-class | risky: arena report of altered/omitted words |
+| XTTS v2 (Coqui/idiap) | 17 | CPML non-commercial, issuer defunct | ~467M, 2.1 GB | possible, slow, unverified | benchmark reference only |
+| Parler mini multilingual v1.1 | 8 core | Apache-2.0 | 0.9B | untested, AR likely slow | curiosity: trained on CML-TTS |
+| Voxtral TTS 4B (Mistral) | 9 | CC-BY-NC | 4B | no, 16 GB GPU required | quality reference (see below) |
+| VibeVoice-Realtime-0.5B | ~11 voices | MIT | 0.5B | latency claim, hardware unstated | low priority, family quality middling |
+| MMS-TTS-nld (Meta) | 1107 | CC-BY-NC | 36M VITS | trivially | quality too low |
+| Piper nl (current stack) | ~45 | permissive | 20-60 MB | yes | the baseline to beat |
+
+Verified as having NO Dutch, ruled out for the goal regardless of
+quality: Kokoro (8), CosyVoice 3 (9), Qwen3-TTS (10), Higgs Audio v2
+(4), IndexTTS 2/2.5 (en/zh + ja/es/ar), MeloTTS (6), Orpheus (en + 7
+abandoned research langs), Zonos v0.1, MegaTTS3, ZipVoice, MaskGCT,
+NeuTTS Air, Dia2, Step Audio EditX, Breeze TTS 2, NVIDIA Magpie, F5-TTS
+base (en/zh; no Dutch finetune exists anywhere, verified gap).
+
+Watch list: Kyutai Pocket TTS (100M, MIT, true real-time on 2 CPU
+cores, 200 ms first audio; en/fr/de/es/pt/it today, added 5 languages
+between January and May 2026, so Dutch may well come; training code is
+open since 2026-08-25, which also makes it a finetune target).
+
+## Quality evidence per language
+
+The uncomfortable, well-sourced core finding: no open-weight model has
+credible published evidence of 8/10 subjective quality in Dutch today.
+
+- TTS Arena V2 is English-only by design ("English only, for now"), so
+  every arena Elo the blog cites says nothing about Dutch. No Dutch
+  arena exists (the one non-English precedent is an Arabic arena).
+- The strongest controlled datapoint is Mistral's Voxtral TTS paper
+  (arXiv:2603.25551): blind native-speaker preference vs ElevenLabs
+  Flash v2.5 across 9 languages. Open model win rates: Spanish 87.8,
+  German 72.0, Italian 57.1, French 54.4... and Dutch 49.4, the only
+  language of the nine where the open model fails to beat ElevenLabs.
+  Dutch is specifically the hard case, not just "another language".
+- The only real Dutch metric in the primary literature is XTTS v2's
+  (arXiv:2406.04904, Table 4): CER 0.946, speaker sim 0.4825, and Dutch
+  is one of XTTS's better languages. Automatic proxies, not MOS.
+- Chatterbox Multilingual has no technical report at all (3-person
+  team, per their own HF discussion) and zero per-language quality
+  numbers; community reports flag phoneme issues in Portuguese and
+  Turkish, nothing published on Dutch either way.
+- CosyVoice 3's own paper shows the usual gradient: Chinese/English
+  best, Japanese/Korean roughly 2x their error rate, de/es/fr/it
+  "good" tier. Qwen3-TTS's report shows the same pattern plus a
+  community-reported Chinese accent bleeding into other languages.
+- Community mileage on Dutch exists only for Piper, and it is
+  damning for nl_NL ("garbled rubbish", "unusable", 2023 through
+  2026), while the two Flemish voices trained on small curated data
+  (nathalie, rdh) are consistently rated the best of the open Dutch
+  bunch, still "robotic". That asymmetry is the key finetuning lesson.
+- For German, French, Spanish, Italian and Polish the aim of >8/10 is
+  realistic with existing models (Voxtral's decisive wins, CosyVoice 3
+  WER 2.7-3.9% there). For Dutch, nothing ships that today; getting
+  there means either Chatterbox being better than its missing paperwork
+  suggests (the listening test decides), or finetuning (below).
+
+## Acceleration on this hardware
+
+Findings from the OpenVINO/NPU/llama.cpp research pass, ranked by
+leverage for the Chatterbox decoder (the RTF 1.9 blocker):
+
+1. Check the single-step decoder first, zero hardware needed. The
+   Chatterbox repo now ships Turbo/Nano variants whose flow-matching
+   decoder runs 1 diffusion step instead of 10. If our exported fp32
+   decoder is doing 10 CFM steps, this is worth more than any hardware
+   port and stacks with everything below.
+2. `pip install onnxruntime-openvino`, point the existing decoder ONNX
+   at `OpenVINOExecutionProvider, device_type GPU, precision FP16`.
+   Same-day experiment, proven on this model class: Kokoro-Intel got
+   ~3x vs CPU on Iris Xe exactly this way. Expect 2-4x if no CPU
+   fallback. Landmines to grep the graph for first: `ScatterNDUpdate`
+   and int64 gather/scatter (killed Kokoro's native GPU port), and
+   STFT-family ops (ISTFT on GPU is fixed only since OpenVINO 2025.2).
+   Prerequisite: `omarchy-pkg-add intel-compute-runtime` (sudo).
+3. Full IR conversion (`ov.convert_model`) targeting GPU FP16. The
+   official OpenVINO notebooks repo has a CosyVoice 3 conversion
+   notebook covering the same LLM + flow-matching + vocoder pipeline
+   shape as Chatterbox (shared S3/CosyVoice lineage), which is the
+   closest working template. Higher ceiling than 2, more work.
+4. FP16 only. INT8 quantization of TTS decoders audibly distorts
+   (MeloTTS team finding, they needed a DeepFilterNet cleanup pass).
+   Our q4 LM is fine (tokens, not audio); keep the decoder at FP16.
+5. llama.cpp SYCL on the Arc iGPU: low priority, the LM half already
+   runs at RTF 0.45. Avoid the Vulkan backend on this GPU generation
+   (documented crashes and gibberish on Arrow/Meteor Lake at 3B+).
+6. The NPU is a dead end for the decoder. Static shapes are mandatory,
+   the plugin is officially immature, intel-npu-acceleration-library
+   was archived April 2025, and the one team that NPU-enabled a TTS
+   pipeline (MeloTTS-OV) deliberately kept the decoder off the NPU.
+   Independent LLM-on-NPU tests measured it slower than CPU. Revisit
+   in a future OpenVINO release, after 1-3 are done.
+
+Arithmetic: LM 0.45 + decoder 1.9 = 2.4 today. A 1-step decoder or a
+2-4x GPU decoder brings the total under 1.0, i.e. faster than real
+time, before any deeper work.
+
+## Build vs adopt (the Dutch finetune path)
+
+If no adopted model clears the bar, the data situation for building is
+decent and the recipe is proven at small scale:
+
+- CML-TTS Dutch: ~645 h, CC-BY-4.0, 24 kHz, 35 speakers, SNR-filtered
+  and aligned specifically for TTS. The bulk-adaptation corpus.
+- MLS Dutch: ~1,580 h, CC-BY-4.0, but raw audiobook narration. The
+  Piper voice trained straight on it became the worst-rated Dutch
+  voice in the ecosystem. Scale without curation demonstrably fails.
+- Common Voice Dutch: 126 h validated, CC0, crowdsourced; diversity
+  data, not voice data.
+- Small curated single-speaker sets: CSS10 Dutch ~14 h, r-dh ~12 h
+  Flemish, dataroots ~5 h studio Flemish, all open. This exact shape
+  produced Piper's best-reviewed Dutch voices.
+- CGN (~900-1,000 h) is license-gated and the wrong shape
+  (conversational, mixed conditions). Not worth pursuing.
+
+The recipe that matches all the evidence: bulk-adapt a strong
+multilingual backbone on CML-TTS Dutch, then a final small finetune on
+one clean single-speaker set to lock a target voice. That two-stage
+split is precisely what separated the liked Flemish Piper voices from
+the disliked large-data nl_NL ones.
+
+Verified gap worth knowing: nobody has published a Dutch finetune of
+any modern flow-matching model (F5-TTS has community finetunes for ~10
+languages, Dutch absent). Existing Dutch checkpoints beyond Piper are
+weak or unusable (MMS-nld non-commercial and low quality, a Tortoise
+Dutch finetune "incomprehensible", an empty Parler Dutch card). One
+wildcard to evaluate: Parkiet, a Dutch-specific TTS project whose
+author claims ElevenLabs parity, with zero independent corroboration.
+Kyutai Pocket TTS releasing its training code (August 2026) makes a
+CPU-native 100M model a realistic future finetune target too.
+
+## Shortlist and spike plan
+
+The bar is >8/10 per language. Nothing ships that for Dutch today, so
+the plan is: measure the closest adoptable candidates on this machine,
+fix the Chatterbox speed problem in parallel, and keep the finetune
+path warm as the fallback.
+
+1. Listening verdict (blocked on the household): the two Chatterbox
+   Dutch samples, `pw-play ~/.local/share/omalexia/spike/nl-1.wav`.
+   This decides whether the acceleration work is worth doing at all.
+2. Spike Supertonic 3 now (no sudo, onnxruntime already installed):
+   398 MB of ONNX, 31 languages, real-time on far weaker CPUs than
+   this one. Generate the same Dutch paragraphs and A/B against
+   Chatterbox and Piper. If its Dutch is even "7", it wins on
+   deployment cost immediately. Caveat to note in the verdict: the
+   open repo is being archived (frozen, still downloadable).
+3. Chatterbox decoder, in order: check steps/Turbo variant (accel
+   finding 1), then onnxruntime-openvino GPU FP16 (finding 2, needs
+   `omarchy-pkg-add intel-compute-runtime`, sudo, user-run).
+4. Quality-screen the remaining Dutch candidates cheaply, demos or
+   short local runs, no engineering: OmniVoice (646 languages would
+   collapse the per-language problem if Dutch is good; weights NC,
+   fine for household use), VoxCPM2 (Apache, GGUF path), OuteTTS 1.0.
+   Only invest integration work in whichever survives listening.
+5. If nothing adopted clears 8 for Dutch: the CML-TTS + curated-voice
+   finetune, backbone chosen from what listened best (Chatterbox
+   finetune vs Pocket TTS once its training code and, ideally, Dutch
+   land). Evaluate Parkiet before starting from scratch.
+6. Keep for the rest of Europe: German, French, Spanish, Italian,
+   Polish are all realistically >8 with Chatterbox or successors, so
+   whatever wins for Dutch likely covers them; verify per language
+   with the same listening protocol instead of trusting tier labels.

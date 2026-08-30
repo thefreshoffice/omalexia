@@ -240,11 +240,18 @@ Verified gap worth knowing: nobody has published a Dutch finetune of
 any modern flow-matching model (F5-TTS has community finetunes for ~10
 languages, Dutch absent). Existing Dutch checkpoints beyond Piper are
 weak or unusable (MMS-nld non-commercial and low quality, a Tortoise
-Dutch finetune "incomprehensible", an empty Parler Dutch card). One
-wildcard to evaluate: Parkiet, a Dutch-specific TTS project whose
-author claims ElevenLabs parity, with zero independent corroboration.
-Kyutai Pocket TTS releasing its training code (August 2026) makes a
-CPU-native 100M model a realistic future finetune target too.
+Dutch finetune "incomprehensible", an empty Parler Dutch card; one
+YourTTS trained on CML-TTS exists, CC-BY-4.0, no quality data). No
+Dutch or Belgian research institute has published an open TTS model
+(Radboud, INT, KU Leuven, Ghent all checked: ASR only). Parkiet, the
+one from-scratch native Dutch model, is now verified: a Dutch port of
+Dia-1.6B, MIT code and OpenRAIL weights, but it needs 10-19 GB of
+NVIDIA VRAM, so it cannot run here; its only quality evidence is the
+author's own informal ElevenLabs comparison. Useful as a listening
+reference and as proof Dutch training data suffices, not as a
+deployable engine. Kyutai Pocket TTS releasing its training code
+(August 2026) makes a CPU-native 100M model a realistic future
+finetune target too.
 
 ## Shortlist and spike plan
 
@@ -253,6 +260,11 @@ the plan is: measure the closest adoptable candidates on this machine,
 fix the Chatterbox speed problem in parallel, and keep the finetune
 path warm as the fallback.
 
+0. Zero-cost Piper win, prepared: the community's best-rated open
+   Dutch voices are the two Flemish ones, nl_BE-nathalie and
+   nl_BE-rdh (rdh now downloaded next to nathalie). Rendered the same
+   three sentences with pim, nathalie and rdh:
+   `~/.local/share/omalexia/spike/piper-nl-*-*.wav`.
 1. Listening verdict (blocked on the household): the two Chatterbox
    Dutch samples, `pw-play ~/.local/share/omalexia/spike/nl-1.wav`.
    This decides whether the acceleration work is worth doing at all.

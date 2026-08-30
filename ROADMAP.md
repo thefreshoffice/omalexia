@@ -251,6 +251,18 @@ at a real-time factor of 0.05, so speed is not the problem quality has.
       - [ ] The "Screen" (region OCR) reading flow already runs tesseract to
             get its text; keep those word boxes instead of re-locating, and
             the marker there becomes exact for free.
+      - [ ] Retire the terminal adapters as upstream accessibility lands.
+            The architecture is: one OS-standard backend (AT-SPI, covering
+            browsers, Electron, GTK and Qt with no per-app code) plus two
+            small adapters for foot and ghostty, which exist only because
+            those terminals do not implement AT-SPI (VTE terminals do), and
+            an OCR net under everything, which is also how macOS handles
+            pixel-only content (Live Text). Ghostty is actively building
+            accessibility support; when a terminal starts publishing its
+            text on the accessibility bus, the tree backend picks it up
+            automatically and its adapter can be deleted. Consider filing
+            or supporting AT-SPI feature requests for foot and ghostty
+            upstream; that, not more adapters, is the way this ends.
       - [ ] AT-SPI as a precision upgrade where it exists: this is exactly
             the macOS mechanism (bounds-for-range on the accessibility
             tree). Findings from the 2026-08-27 spike on the laptop: the

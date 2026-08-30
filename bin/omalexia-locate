@@ -280,24 +280,17 @@ def foot_pad():
     return 0.0, 0.0
 
 
-def _foot_pipe(window):
-    """The visible text and grid geometry of a foot window (image pixels),
-    or None when this is not a foot window or the binding is missing."""
-    pid = window.get("pid")
-    if not pid:
-        return None
+def _proc_comm(pid) -> str:
     try:
-        comm = Path(f"/proc/{pid}/comm").read_text().strip()
+        return Path(f"/proc/{pid}/comm").read_text().strip()
     except OSError:
-        return None
-    if comm not in ("foot", "footclient"):
-        return None
-    tty = None
+        return ""
+
+
+def _tty_size(pid):
+    """rows, cols of the terminal window's pty, or None."""
     out = run(["ps", "-o", "tty=", "--ppid", str(pid)], timeout=5).stdout.decode()
-    for candidate in out.split():
-        if candidate.startswith("pts/"):
-            tty = candidate
-            break
+    tty = next((c for c in out.split() if c.startswith("pts/")), None)
     if tty is None:
         return None
     try:
@@ -306,6 +299,30 @@ def _foot_pipe(window):
     except ValueError:
         return None
     if rows < 2 or cols < 10:
+        return None
+    return rows, cols
+
+
+def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
+    scale = window["scale"]
+    pad_x *= scale
+    pad_y *= scale
+    cell_w = (window["w"] * scale - 2 * pad_x) / cols
+    cell_h = (window["h"] * scale - 2 * pad_y) / rows
+    if cell_w <= 2 or cell_h <= 4:
+        return None
+    return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
+            "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h}
+
+
+def _foot_pipe(window):
+    """The visible text and grid geometry of a foot window (image pixels),
+    or None when this is not a foot window or the binding is missing."""
+    pid = window.get("pid")
+    if not pid or _proc_comm(pid) not in ("foot", "footclient"):
+        return None
+    size = _tty_size(pid)
+    if size is None:
         return None
 
     visible = RUNTIME / "visible-text"
@@ -325,23 +342,77 @@ def _foot_pipe(window):
     else:
         return None
 
-    lines = visible.read_text().split("\n")
-    scale = window["scale"]
     pad_x, pad_y = foot_pad()
-    pad_x *= scale
-    pad_y *= scale
-    cell_w = (window["w"] * scale - 2 * pad_x) / cols
-    cell_h = (window["h"] * scale - 2 * pad_y) / rows
-    if cell_w <= 2 or cell_h <= 4:
+    return _grid_dict(window, visible.read_text().split("\n"), *size, pad_x, pad_y)
+
+
+# Ghostty ships a stock binding that writes the screen text to a temporary
+# file and puts the path on the clipboard; pressing it and restoring the
+# clipboard afterwards gives the same exact grid foot's pipe does. Ghostty
+# also pipes logical (unwrapped) lines with interior blanks kept.
+GHOSTTY_KEY = ["wtype", "-M", "logo", "-M", "ctrl", "-M", "shift", "-k", "j",
+               "-m", "shift", "-m", "ctrl", "-m", "logo"]
+
+
+def _ghostty_pad():
+    try:
+        cfg = (Path.home() / ".config" / "ghostty" / "config").read_text()
+    except OSError:
+        return 2.0, 2.0
+    mx = re.search(r"^\s*window-padding-x\s*=\s*(\d+)", cfg, re.M)
+    my = re.search(r"^\s*window-padding-y\s*=\s*(\d+)", cfg, re.M)
+    return (float(mx.group(1)) if mx else 2.0,
+            float(my.group(1)) if my else 2.0)
+
+
+def _ghostty_pipe(window):
+    pid = window.get("pid")
+    if not pid or _proc_comm(pid) != "ghostty":
         return None
-    return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
-            "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h}
+    size = _tty_size(pid)
+    if size is None:
+        return None
+    types = run(["wl-paste", "-l"], timeout=5).stdout.decode("utf-8", "replace")
+    textual = "text" in types
+    saved = run(["wl-paste", "-n"], timeout=5).stdout if textual else None
+    if run(GHOSTTY_KEY, timeout=5).returncode != 0:
+        return None
+    dump = None
+    for _ in range(40):
+        time.sleep(0.02)
+        clip = run(["wl-paste", "-n"], timeout=5).stdout.decode("utf-8", "replace").strip()
+        if clip and clip != (saved or b"").decode("utf-8", "replace").strip() \
+                and clip.startswith(("/tmp/", "/run/", "/var/")) and Path(clip).is_file():
+            dump = Path(clip)
+            break
+    # Put the clipboard back the way it was; the dump path is ours, not
+    # the user's copy.
+    if saved is not None:
+        subprocess.Popen(["wl-copy"], stdin=subprocess.PIPE,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+                         ).communicate(saved)
+    elif dump is not None:
+        run(["wl-copy", "--clear"], timeout=5)
+    if dump is None:
+        return None
+    try:
+        lines = dump.read_text().split("\n")
+    except OSError:
+        return None
+    dump.unlink(missing_ok=True)
+    pad_x, pad_y = _ghostty_pad()
+    return _grid_dict(window, lines, *size, pad_x, pad_y)
+
+
+def _term_grid(window):
+    """Whichever terminal grid the focused window offers."""
+    return _foot_pipe(window) or _ghostty_pipe(window)
 
 
 def foot_grid_words(window):
-    """(norm, x, y, w, h, original) image-pixel words of a foot window's
-    visible text, or None."""
-    grid = _foot_pipe(window)
+    """(norm, x, y, w, h, original) image-pixel words of a terminal
+    window's visible text (foot or ghostty), or None."""
+    grid = _term_grid(window)
     if grid is None:
         return None
     cols, cell_w, cell_h = grid["cols"], grid["cell_w"], grid["cell_h"]
@@ -383,16 +454,12 @@ def grab_text(window, cursor, image=None):
     px = (cursor[0] - window["x"]) * window["scale"]
     py = (cursor[1] - window["y"]) * window["scale"]
     hint = None
-    grid = _foot_pipe(window)
+    grid = _term_grid(window)
     pid = window.get("pid")
-    if grid is None and pid:
-        try:
-            if Path(f"/proc/{pid}/comm").read_text().strip() in ("foot", "footclient"):
-                # A foot without the pipe binding: started before the last
-                # install. Exact reading returns with a fresh terminal.
-                hint = "This terminal predates the last Omalexia update; open a new one for exact reading."
-        except OSError:
-            pass
+    if grid is None and pid and _proc_comm(pid) in ("foot", "footclient"):
+        # A foot without the pipe binding: started before the last
+        # install. Exact reading returns with a fresh terminal.
+        hint = "This terminal predates the last Omalexia update; open a new one for exact reading."
     if grid is not None:
         col = int(max(0, min(grid["cols"] - 1, (px - grid["pad_x"]) // grid["cell_w"])))
         vrow = int((py - grid["pad_y"]) // grid["cell_h"])
@@ -1233,8 +1300,12 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
 
         # The window's own text (terminal grid or accessibility tree) beats
         # every pixel method: exact, fast, and fresh even while the window
-        # streams or scrolls. Re-read it per tick.
-        if backend in ("grid", "tree") and not grid_dead:
+        # streams or scrolls. Re-read it per tick. Ghostty's grid rides the
+        # clipboard, so it is not re-read per tick; its boxes fall back to
+        # signature tracking below instead.
+        if backend in ("grid", "tree") and not grid_dead \
+                and (backend == "tree"
+                     or _proc_comm(window.get("pid")) in ("foot", "footclient")):
             if not window_focused(window["address"]):
                 calm += 1
                 continue  # keys must not land in some other window

@@ -292,9 +292,12 @@ def main(argv: list[str]) -> int:
         text = data.get("text") if data.get("ok") else ""
         if not text:
             notify("Nothing to read here",
-                   str(data.get("error") or "Point at some text, then press Alt+F10."),
+                   str(data.get("hint") or data.get("error")
+                       or "Point at some text, then press Alt+F10."),
                    GLYPH_WARN)
             return 1
+        if data.get("hint"):
+            notify("Reading from the screen", str(data["hint"]))
         return speak(text, lang, wait, quiet, speed)
     if cmd == "clipboard":
         return speak(get_clipboard(), lang, wait, quiet, speed)

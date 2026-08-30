@@ -95,7 +95,7 @@ repos themselves. "CPU here" means a realistic path on this machine.
 | Model | Langs | Weights license | Size | CPU here | Verdict |
 | --- | --- | --- | --- | --- | --- |
 | Chatterbox Multilingual V3 | 23 | MIT | 0.5B LM + decoder, 3.2 GB | RTF 2.4 measured; fixable (below) | lead candidate |
-| Supertonic 3 (Supertone) | 31 | OpenRAIL-M, commercial OK | 99M, 398 MB ONNX | yes: 0.3 RTF on an e-reader | spike now |
+| Supertonic 3 (Supertone) | 31 | OpenRAIL-M, commercial OK | 99M, 398 MB ONNX | yes: RTF 0.36-0.73 measured here | spiked, awaiting listening |
 | VoxCPM2 (OpenBMB) | 30 | Apache-2.0 | 2B | GGUF path RTF ~1.76 on M4 Pro, not real time | spike if quality earns it |
 | OmniVoice (k2-fsa) | 646 | CC-BY-NC (code Apache) | 0.6B | unverified; GPU RTF 0.025 | quality-test via demo first |
 | OpenAudio S1-mini (Fish) | 13 | CC-BY-NC-SA | 0.5B | no (broken CPU path) | skip |
@@ -145,6 +145,12 @@ credible published evidence of 8/10 subjective quality in Dutch today.
   best, Japanese/Korean roughly 2x their error rate, de/es/fr/it
   "good" tier. Qwen3-TTS's report shows the same pattern plus a
   community-reported Chinese accent bleeding into other languages.
+- One genuine Dutch head-to-head exists, buried in Supertonic's README:
+  per-language WER on the Minimax-MLS-test benchmark. Dutch: OmniVoice
+  0.77, VoxCPM2 0.84, Supertonic 3 1.47 (English for scale: 2.02, 2.11,
+  2.06). Intelligibility, not naturalness, and self-published by
+  Supertone, but it says all three read Dutch accurately, which Piper's
+  nl_NL demonstrably does not.
 - Community mileage on Dutch exists only for Piper, and it is
   damning for nl_NL ("garbled rubbish", "unusable", 2023 through
   2026), while the two Flemish voices trained on small curated data
@@ -240,10 +246,11 @@ path warm as the fallback.
 1. Listening verdict (blocked on the household): the two Chatterbox
    Dutch samples, `pw-play ~/.local/share/omalexia/spike/nl-1.wav`.
    This decides whether the acceleration work is worth doing at all.
-2. Spike Supertonic 3 now (no sudo, onnxruntime already installed):
-   398 MB of ONNX, 31 languages, real-time on far weaker CPUs than
-   this one. Generate the same Dutch paragraphs and A/B against
-   Chatterbox and Piper. If its Dutch is even "7", it wins on
+2. Supertonic 3 spike: DONE on this machine. 8 preset voices, Dutch
+   synthesis at RTF 0.36-0.73 on CPU (pypi SDK, ONNX, 8 flow steps,
+   ~260 MB download). Six samples await the same listening test:
+   `pw-play ~/.local/share/omalexia/spike/st3-nl-1-f1.wav` (also -2,
+   -3, and m1 variants). If its Dutch is even "7", it wins on
    deployment cost immediately. Caveat to note in the verdict: the
    open repo is being archived (frozen, still downloadable).
 3. Chatterbox decoder, in order: check steps/Turbo variant (accel

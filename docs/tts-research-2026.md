@@ -283,6 +283,8 @@ than real time.
 | Chatterbox q4 + fp32 decoder | 34 s | 2.0 GB | 3.19 / 2.81 / 2.46 |
 | OmniVoice, 16 steps | 1.1 s | 2.9 GB | 40.4 / 45.0 / 13.8 |
 | OmniVoice, 32 steps | 1.1 s | 2.9 GB | 65.7 (kort only) |
+| OmniVoice XPU fp16, 32 steps | 2.2 s | 4.2 GB | 1.04 / 1.00 / 0.86 |
+| OmniVoice XPU fp16, 16 steps | 2.2 s | 4.2 GB | 0.61 / 0.53 / 0.48 |
 | VoxCPM2 (bf16 torch) | 370 s first run | ~5.9 GB | 93 / 41 / 36 |
 
 Notes:
@@ -296,9 +298,14 @@ Notes:
   the decoder diagnosis. Applying the 1-step decoder arithmetic to
   the paragraph run projects roughly RTF 1.0, borderline real time on
   CPU before any iGPU work.
-- OmniVoice on CPU is disqualified at any step count, though its
-  non-autoregressive design amortizes on longer text (13.8 on the
-  paragraph). The Arc XPU experiment is its only viable local route.
+- OmniVoice on CPU is disqualified at any step count, but the Arc
+  iGPU changes everything: after installing intel-compute-runtime and
+  level-zero-loader (2026-08-31), PyTorch 2.13+xpu sees the iGPU (128
+  EUs) and OmniVoice runs 25-75x faster than CPU, comfortably real
+  time at 16 steps and borderline at 32. The 646-language engine is
+  practical on this machine. XPU listening samples saved for a
+  quality check against the CPU ones: ov-xpu-*.wav (32 steps, fp16)
+  and ov-xpu16-*.wav (16 steps, fp16).
 - VoxCPM2's first two spike sentences ran contended; the paragraph
   (RTF 36) was mostly solo. Rejected on sound anyway.
 
@@ -313,13 +320,12 @@ and the on-machine measurements:
    integration shape (offline ONNX, per-language voice choice).
    Caveat recorded: the upstream open repo is frozen (archived), so
    pin the assets we have.
-2. OmniVoice on the Arc iGPU: install `omarchy-pkg-add
-   intel-compute-runtime` (sudo, user-run), then PyTorch XPU wheels
-   in the spike venv, `device_map="xpu"`. OmniVoice documents Intel
-   Arc support explicitly (tested on A310/B50 by upstream). If RTF
-   lands under ~0.5, its 646 languages collapse the per-language
-   problem in one engine; weights are CC-BY-NC, fine for household
-   use, flagged for any commercial future.
+2. OmniVoice on the Arc iGPU: DONE, and it works. RTF 0.48-0.61 at
+   16 steps, 0.86-1.04 at 32 steps (fp16, PyTorch XPU backend, 4.2 GB
+   resident). Its 646 languages are now practical in one engine on
+   this machine. Remaining checks: fp16/step16 quality by ear
+   (samples saved), stability of the XPU path under the daemon, and
+   the CC-BY-NC weights flag for any commercial future.
 3. Chatterbox: get the missing listening verdict (nl-1/nl-2.wav).
    Only if it wins on sound does the decoder acceleration work
    (single-step Turbo variant, then onnxruntime-openvino GPU FP16)

@@ -20,6 +20,8 @@
   "omalexia.voice.nl-nathalie": {"icon":"󰗊","label":"Vlaams: Nathalie","checked":"grep -q 'nl = \"nl_BE-nathalie-medium\"' ~/.config/omalexia/config.toml 2>/dev/null","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-voice set nl nl_BE-nathalie-medium'"},
   "omalexia.voice.kokoro": {"icon":"󰚩","label":"English: Kokoro (premium, optional)","checked":"grep -q 'en = \"kokoro\"' ~/.config/omalexia/config.toml 2>/dev/null","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-voice engine en kokoro'"},
   "omalexia.voice.piper": {"icon":"󰗊","label":"English: back to Piper","when":"grep -q 'en = \"kokoro\"' ~/.config/omalexia/config.toml 2>/dev/null","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-voice engine en piper'"},
+  "omalexia.voice.gpu": {"icon":"󰢮","label":"Enable GPU Voices (best quality)","when":"omalexia-gpu-setup check","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-gpu-setup; read -r'"},
+  "omalexia.voice.advise": {"icon":"󰛨","label":"Which Voices Fit This Machine?","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-tts-advisor; read -r'"},
   "omalexia.voice.languages": {"icon":"󰗊","label":"Add a Language…","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-voice add'"},
   "omalexia.voice.more": {"icon":"󰉉","label":"More Voices (terminal)","action":"omarchy-launch-floating-terminal-with-presentation 'omalexia-voice list; echo; echo \"Install with: omalexia voice set en|nl <name>\"; read -r'"},
   "omalexia.dictation": {"icon":"󰍬","label":"Dictation"},

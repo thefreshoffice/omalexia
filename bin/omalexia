@@ -4,6 +4,7 @@
 #   omalexia say ...          read aloud (see: omalexia say --help)
 #   omalexia stop             stop reading
 #   omalexia voice ...        choose/install voices (see: omalexia voice --help)
+#   omalexia gpu [check]      enable the GPU for the premium voices (driver setup)
 #   omalexia font [name]      reading font: atkinson | opendyslexic | inter | reset
 #   omalexia focus [toggle]   reading mode for the focused window
 #   omalexia tint [toggle]    warm paper tint
@@ -108,6 +109,7 @@ case "$cmd" in
   say) omalexia-say "$@" ;;
   stop) omalexia-say stop ;;
   voice | voices) omalexia-voice "$@" ;;
+  gpu) omalexia-gpu-setup "$@" ;;
   font | fonts) omalexia-font "$@" ;;
   focus | reading-mode) omalexia-focus "$@" ;;
   tint) omalexia-tint "$@" ;;

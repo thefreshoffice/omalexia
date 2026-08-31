@@ -1,0 +1,85 @@
+#!/usr/bin/env bash
+# omalexia-gpu-setup: one-click GPU enablement for the premium reading voices.
+#
+# Intel GPUs need two userspace packages (intel-compute-runtime and
+# level-zero-loader) before PyTorch can use them; this script installs them
+# and then offers to install OmniVoice. NVIDIA machines with their driver and
+# AMD discrete GPUs (ROCm wheels bundle their own userspace) need no system
+# packages, so this script just reports and hands over to the voice installer.
+#
+#   omalexia-gpu-setup          run the setup (asks for the admin password)
+#   omalexia-gpu-setup check    exit 0 only when a driver install would help
+#                               (used by the Omarchy menu to show the entry)
+set -euo pipefail
+
+INTEL_PKGS=(intel-compute-runtime level-zero-loader)
+
+have_intel_gpu() {
+  local v
+  for v in /sys/class/drm/renderD*/device/vendor; do
+    [[ -f $v && $(<"$v") == 0x8086 ]] && return 0
+  done
+  return 1
+}
+
+have_amd_gpu() {
+  local v
+  for v in /sys/class/drm/renderD*/device/vendor; do
+    [[ -f $v && $(<"$v") == 0x1002 ]] && return 0
+  done
+  return 1
+}
+
+have_level_zero() {
+  # No pipe: with pipefail, grep -q would kill ldconfig with SIGPIPE and
+  # turn a successful match into a failing pipeline.
+  local libs
+  libs=$(ldconfig -p 2>/dev/null || true)
+  [[ $libs == *libze_loader* ]]
+}
+
+if [[ ${1:-} == check ]]; then
+  # Only advertise the click when it would actually change something.
+  have_intel_gpu && ! have_level_zero
+  exit
+fi
+
+if have_intel_gpu && ! have_level_zero; then
+  echo "Intel GPU found. Installing its compute stack (${INTEL_PKGS[*]}) …"
+  if [[ -t 0 ]]; then
+    sudo pacman -S --needed --noconfirm "${INTEL_PKGS[@]}"
+  else
+    # No terminal (menu/notification path): polkit shows a password dialog.
+    pkexec pacman -S --needed --noconfirm "${INTEL_PKGS[@]}"
+  fi
+  if have_level_zero; then
+    echo "GPU compute stack ready."
+  else
+    echo "Install finished but the Level Zero loader is still not visible; check pacman output." >&2
+    exit 1
+  fi
+elif have_intel_gpu; then
+  echo "Intel GPU compute stack is already installed."
+elif have_amd_gpu; then
+  echo "AMD GPU found. No system packages are needed: the voice installer"
+  echo "uses PyTorch ROCm wheels, which bring their own runtime. Note that"
+  echo "AMD integrated GPUs (APUs) are not officially supported by ROCm."
+elif command -v nvidia-smi >/dev/null; then
+  echo "NVIDIA GPU with driver found; nothing to set up."
+else
+  echo "No supported GPU found on this machine. The CPU engines (Supertonic,"
+  echo "Piper) are the right choice here; see: omalexia voice advise"
+  exit 0
+fi
+
+if [[ -d "${XDG_DATA_HOME:-$HOME/.local/share}/omalexia/omnivoice/.venv" ]]; then
+  echo "OmniVoice voices are already installed; pick them per language with:"
+  echo "  omalexia voice engine LANG omnivoice"
+elif [[ -t 0 ]]; then
+  read -r -p "Install the OmniVoice premium voices now (multi-GB download)? [Y/n] " answer
+  if [[ ${answer,,} != n* ]]; then
+    omalexia-voice install omnivoice
+  fi
+else
+  echo "Next: omalexia voice install omnivoice   (then: omalexia voice engine LANG omnivoice)"
+fi

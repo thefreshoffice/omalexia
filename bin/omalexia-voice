@@ -250,20 +250,23 @@ def _engine_venv(directory: Path, worker_stem: str, packages: list[str],
 
 
 def _gpu_backend() -> str:
-    """Which torch backend fits this machine: xpu, cuda or cpu."""
+    """Which torch backend fits this machine: xpu, cuda, rocm or cpu."""
     import ctypes.util
     import shutil
-    intel_gpu = False
+    vendors = set()
     for vendor in Path("/sys/class/drm").glob("renderD*/device/vendor"):
         try:
-            if vendor.read_text().strip() == "0x8086":
-                intel_gpu = True
+            vendors.add(vendor.read_text().strip())
         except OSError:
             pass
-    if intel_gpu and ctypes.util.find_library("ze_loader"):
+    if "0x8086" in vendors and ctypes.util.find_library("ze_loader"):
         return "xpu"
     if shutil.which("nvidia-smi"):
         return "cuda"
+    if "0x1002" in vendors:
+        # ROCm wheels bundle their runtime; discrete Radeons only (APUs are
+        # unsupported by ROCm and will fall back to CPU inside torch).
+        return "rocm"
     return "cpu"
 
 
@@ -286,6 +289,7 @@ def install_omnivoice() -> bool:
     torch_index = {
         "xpu": "https://download.pytorch.org/whl/xpu",
         "cuda": None,  # default PyPI wheels bundle CUDA
+        "rocm": "https://download.pytorch.org/whl/rocm7.0",
         "cpu": "https://download.pytorch.org/whl/cpu",
     }[backend]
     if backend == "cpu":
@@ -293,9 +297,9 @@ def install_omnivoice() -> bool:
         for vendor in Path("/sys/class/drm").glob("renderD*/device/vendor"):
             try:
                 if vendor.read_text().strip() == "0x8086":
-                    gpu_hint = ("\nThis machine has an Intel GPU; install "
-                                "intel-compute-runtime and level-zero-loader first "
-                                "to use it, then rerun this install.")
+                    gpu_hint = ("\nThis machine has an Intel GPU; run "
+                                "omalexia-gpu-setup to enable it, then rerun "
+                                "this install.")
             except OSError:
                 pass
         print("WARNING: no usable GPU backend found. OmniVoice on CPU is far "

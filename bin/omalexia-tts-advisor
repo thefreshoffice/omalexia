@@ -86,6 +86,7 @@ def recommend(spec: dict) -> list[dict]:
     mem = spec["mem_gb"]
     disk = spec["disk_free_gb"]
     intel_gpu = any(g["vendor"] == "intel" for g in spec["gpus"])
+    amd_gpu = any(g["vendor"] == "amd" for g in spec["gpus"])
     gpu_ready = (intel_gpu and spec["level_zero"]) or spec["nvidia"]
     out: list[dict] = []
 
@@ -100,10 +101,17 @@ def recommend(spec: dict) -> list[dict]:
             "(weights CC-BY-NC: personal use)", "646 (all of them)",
             "omalexia voice install omnivoice")
     elif intel_gpu and not spec["level_zero"]:
-        add("omnivoice", "possible after driver install",
-            "Intel GPU present but the compute stack is missing; install "
-            "intel-compute-runtime and level-zero-loader (pacman), then rerun",
-            "646 (all of them)")
+        add("omnivoice", "one click away",
+            "Intel GPU present, only its compute stack is missing; run "
+            "omalexia-gpu-setup (or the Omarchy menu: Omalexia > Voice > "
+            "Enable GPU Voices) and it installs the two driver packages",
+            "646 (all of them)", "omalexia-gpu-setup")
+    elif amd_gpu and mem >= 8 and disk >= 12:
+        add("omnivoice", "worth trying",
+            "AMD GPU: the installer picks PyTorch ROCm wheels, which bundle "
+            "their own runtime; discrete Radeons only, APUs are not supported "
+            "by ROCm, and this path is untested by this project",
+            "646 (all of them)", "omalexia voice install omnivoice")
     elif gpu_ready:
         add("omnivoice", "not advised",
             f"GPU present but only {mem:.0f} GB RAM / {disk:.0f} GB free disk; "

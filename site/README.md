@@ -1,42 +1,38 @@
 # omalexia site
 
-One static page, `index.html`, no build step. The only external requests are
+Three static pages, no build step: `index.html` (the announcement, now in
+beta), `research.html` (the speech research and the numbers), and
+`changelog.html` (what changed, and when). The only external requests are
 Google Fonts (Atkinson Hyperlegible Next, JetBrains Mono); everything else is
-inline. Copy the file anywhere that serves static files.
+inline. Copy the folder anywhere that serves static files.
 
-The page practises what it preaches: a plain, distinct typeface at 19 px with
+The pages practise what they preach: a plain, distinct typeface at 19 px with
 1.6 line height and a ~62-character measure, a paper (off-white) theme and a
 night theme, a Calm mode (lower contrast, more space, no motion), text size
 controls, and a Read-aloud button that uses the browser's own speech, which
 on Linux goes through Speech Dispatcher, i.e. the Omalexia voice.
 
-## Hosting
+## Hosting: GitHub Pages, omalexia.org
 
-**GitHub Pages (free).** GitHub Pages serves from a repository root or a
-`docs/` folder, not from `site/`. Two options:
+This is set up. `.github/workflows/pages.yml` publishes this folder to GitHub
+Pages on every push to `main` that touches `site/`. The Pages source is
+"GitHub Actions" and the custom domain is `omalexia.org` (Settings → Pages).
 
-1. A small workflow that publishes this folder:
+To make omalexia.org resolve, set these records at the domain's DNS provider:
 
-    ```yaml
-    # .github/workflows/site.yml
-    name: site
-    on: { push: { branches: [main], paths: ['site/**'] } }
-    permissions: { pages: write, id-token: write, contents: read }
-    jobs:
-      deploy:
-        runs-on: ubuntu-latest
-        environment: github-pages
-        steps:
-          - uses: actions/checkout@v4
-          - uses: actions/upload-pages-artifact@v3
-            with: { path: site }
-          - id: deploy
-            uses: actions/deploy-pages@v4
-    ```
-   Then Settings → Pages → Source: GitHub Actions. Add a `CNAME` file here
-   for a custom domain (e.g. `omalexia.example.com`).
+```
+omalexia.org.      A       185.199.108.153
+omalexia.org.      A       185.199.109.153
+omalexia.org.      A       185.199.110.153
+omalexia.org.      A       185.199.111.153
+www.omalexia.org.  CNAME   thefreshoffice.github.io.
+```
 
-2. Or move `site/index.html` to a `docs/` folder and pick "Deploy from a branch".
+Once the records propagate, tick "Enforce HTTPS" in Settings → Pages; GitHub
+issues the certificate automatically. Without the domain, the site is at
+https://thefreshoffice.github.io/omalexia/.
+
+### Alternatives
 
 **Cloudflare Pages / Netlify (free).** Point the project at this repo with
 build command empty and output directory `site`.
@@ -46,7 +42,7 @@ build command empty and output directory `site`.
 ```nginx
 server {
     listen 443 ssl http2;
-    server_name omalexia.example.com;
+    server_name omalexia.org;
     root /var/www/omalexia;
     index index.html;
     add_header Cache-Control "public, max-age=600";
@@ -57,7 +53,9 @@ Deploy with `rsync -av --delete site/ server:/var/www/omalexia/`.
 
 ## Editing
 
-Everything is in `index.html`: tokens at the top of the `<style>` block
+The shared design lives in each page's `<style>` block: tokens at the top
 (paper and night palettes, type scale, measure), copy in `<main>`, and the
 small script at the bottom (theme, calm mode, text size, read aloud, copy
-command). Keep the page self-contained.
+command). The three pages share the same header, tokens and script; when you
+change those in `index.html`, mirror the change in the other two. Keep every
+page self-contained.

@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Omalexia</title>
-<meta name="description" content="Omalexia is a dyslexia-first layer on Omarchy Linux: local text to speech, local dictation, and a calm, readable screen, one key each.">
+<title>Omalexia changelog</title>
+<meta name="description" content="What changed in Omalexia, and when, in plain words. Newest first.">
 <meta name="color-scheme" content="dark light">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -317,7 +317,7 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
     <a class="brand" href="index.html">OMA<span>LEXIA</span></a>
     <nav class="nav" aria-label="Site">
       <a href="research.html">Research</a>
-      <a href="changelog.html">Changelog</a>
+      <a href="changelog.html" aria-current="page">Changelog</a>
       <a href="https://github.com/thefreshoffice/omalexia">GitHub</a>
     </nav>
     <div class="tools" role="group" aria-label="Reading settings for this page">
@@ -338,163 +338,97 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
 
   <section class="hero">
     <div class="wrap stack-lg">
-      <pre class="wordmark" aria-label="Omalexia">█████  █   █   ███   █      █████  █   █  █████   ███
-█   █  ██ ██  █   █  █      █       █ █     █    █   █
-█   █  █ █ █  █████  █      ████     █      █    █████
-█   █  █   █  █   █  █      █       █ █     █    █   █
-█████  █   █  █   █  █████  █████  █   █  █████  █   █</pre>
       <div class="stack">
-        <p class="eyebrow"><span class="pill">Beta</span> A dyslexia-first profile for Omarchy Linux · by Michael de By | The Fresh Office</p>
-        <h1>Linux that reads to you, listens to you, and stays calm.</h1>
-        <p class="lede">We are building the best operating system for dyslexic people, and for everyone whose eyes get tired before their day does.</p>
-        <p class="lede-sub">Omalexia layers three things on top of <a href="https://omarchy.org/">Omarchy</a>: a voice that reads anything, ears that type what you say, and a screen that gets out of the way. All of it runs on your own machine. Nothing leaves it.</p>
-      </div>
-      <div class="actions">
-        <button class="button" type="button" id="heroRead">Read this page aloud</button>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia">Install the beta from GitHub →</a>
-      </div>
-      <div class="keys" aria-label="The two keys">
-        <div><kbd>F9</kbd> talk</div>
-        <div><kbd>F10</kbd> listen</div>
-        <div><kbd>Super</kbd>+<kbd>R</kbd> reading mode</div>
-      </div>
-    </div>
-  </section>
-
-  <section class="goal">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">The goal</p>
-      <blockquote>Make the best operating system for dyslexics and alike: not an accessibility setting buried in a menu, but the default.</blockquote>
-      <p>Most computers treat reading as free and speaking as a feature. For a dyslexic person it is the other way round: decoding text costs effort every minute of the day, and the voice is the fast path. Omalexia starts from that. Hearing text, saying text and seeing text calmly are first-class, one key each, and they work in every app, the terminal included.</p>
-    </div>
-  </section>
-
-  <section class="shoutout">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">Credit where it is due</p>
-      <h2>Omarchy already does half the work.</h2>
-      <p>Before we added a single line, the <a href="https://omarchy.org/">Omarchy</a> team had already built something that helps dyslexic people every day. Tiling windows mean nothing overlaps and nothing hides: every window has its place, the keyboard moves you between them, and the screen stays tidy without effort. One consistent theme runs through every app. There is no clutter to decode and no hunting for the window you lost.</p>
-      <p>That focus is not only calmer, it is more fun. Omarchy is fast, opinionated and beautifully put together, and it makes the computer feel like a tool you own rather than a place you get lost in. Thank you, DHH and everyone who builds Omarchy. Omalexia exists because there was such a good foundation to build on.</p>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap stack-lg">
-      <p class="eyebrow">What we hold important</p>
-      <h2>Four things, in this order.</h2>
-      <div class="cards">
-        <article class="card">
-          <span class="tag">Local first</span>
-          <h3><span class="glyph">▶</span> The best text to speech</h3>
-          <p>Highlight anything, or just point at it, and press <kbd>F10</kbd>: you hear it within a tenth of a second, and the word being spoken is highlighted in the text while you listen. Web pages, mail, PDFs, code, a screenshot of a slide: if it is on the screen it can be read. The language is detected from the text itself, and you can add a voice for any language you read.</p>
-          <ul>
-            <li>Neural voices running on the laptop, no cloud, no account</li>
-            <li>The same voice everywhere: browser reader mode, screen reader, any app that talks</li>
-            <li>Stop, speed up, slow down without looking</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">Local first</span>
-          <h3><span class="glyph">●</span> Dictation that just works</h3>
-          <p>Hold <kbd>F9</kbd>, say it, let go: the words land where your cursor is, with punctuation, in Dutch or English, in a terminal or a text box alike.</p>
-          <ul>
-            <li>A tick you can hear when it starts and stops listening</li>
-            <li>Your own word list: “fresh office” becomes “The Fresh Office”</li>
-            <li>Filler words gone, first letter capitalised, nothing sent anywhere</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">Calm by default</span>
-          <h3><span class="glyph">▭</span> A screen you can read when tired</h3>
-          <p>Letters that wobble at 22:00 are not a character flaw; they are a layout problem. When you want to keep working we have you covered: lines of a readable length, the window you are reading centred and the rest dimmed, a warm paper tint instead of glare, and letterforms that stay apart.</p>
-          <ul>
-            <li>Reading mode on one key, narrow single windows on wide monitors</li>
-            <li>A distinct, plain typeface as the desktop default; dyslexia fonts available, never forced</li>
-            <li>Bigger text everywhere with one setting, reduced motion when you want it</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">In the open</span>
-          <h3><span class="glyph">▤</span> Choices you can check</h3>
-          <p>Every choice is measured before it is made and written down afterwards: which voice starts fastest on a CPU, which fonts the research actually supports, why line length matters more than font shape. As we build, the how and the why land here.</p>
-          <ul>
-            <li>Built on Omarchy, installed as one opt-in profile</li>
-            <li>Everything reversible with one command</li>
-            <li>Source, notes and numbers on GitHub</li>
-          </ul>
-        </article>
+        <p class="eyebrow">Changelog</p>
+        <h1>What changed, and when.</h1>
+        <p class="lede">Newest first, in plain words. One entry per thing you would actually notice.</p>
+        <p class="lede-sub">The full commit-by-commit history is <a href="https://github.com/thefreshoffice/omalexia/commits/main">on GitHub</a>. Omalexia is in beta testing: if something below does not behave as described on your machine, <a href="https://github.com/thefreshoffice/omalexia/issues">that is a bug report we want</a>.</p>
       </div>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">How we work</p>
-      <h2>Experience first, then optimise.</h2>
-      <div class="how">
-        <div class="stack">
-          <h3>Measured, not assumed</h3>
-          <p>A voice that takes a second to start is a voice you stop using. We time everything on the machines we actually carry and pick what is instant, then offer the richer options as a choice.</p>
-        </div>
-        <div class="stack">
-          <h3>One key, everywhere</h3>
-          <p>No app-specific plugins to remember. Reading, dictation and reading mode are keys on the keyboard and buttons in the bar, and they work in the same way in a browser, an editor and a terminal.</p>
-        </div>
-        <div class="stack">
-          <h3>Yours to keep</h3>
-          <p>Speech in both directions runs on your own computer. That is faster, it works on a train, and what you read and say stays with you.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="open">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">Open source, open door</p>
-      <h2>Help make this the best accessibility add-on for Omarchy.</h2>
-      <p>Omalexia is open source under the MIT licence, and everyone who wants to help is welcome: dyslexic readers who can tell us what actually works, people who know voices and speech models, people who care about fonts and layout, translators, testers, and anyone who just wants Omarchy to be kinder to more people. Ideas, bug reports and pull requests all count.</p>
-      <p class="lede-sub">The code, the notes and the numbers are in one repository. Start with an issue if you are unsure; start with a pull request if you are not.</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/thefreshoffice/omalexia">Read the code →</a>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia/issues">Open an issue →</a>
-      </div>
+      <p class="eyebrow">In testing · research branch</p>
+      <h2>Two engines that change the language question.</h2>
+      <ul class="entries">
+        <li><strong>Supertonic 3</strong> (31 languages) and <strong>OmniVoice</strong> (646 languages) now run behind the read-aloud daemon as first-class engines. Supertonic is real time on a bare CPU; OmniVoice is real time on an Intel Arc iGPU. Both rated very good by a native Dutch listener.</li>
+        <li>A fallback ladder keeps reading working everywhere: OmniVoice, then Supertonic, then Piper.</li>
+        <li><code>omalexia voice advise</code> reads your machine (CPU, RAM, GPU, compute stack) and recommends the best engines it can sustain.</li>
+        <li>The multilingual speech research written up in full: see <a href="research.html">the research page</a>.</li>
+      </ul>
+      <p class="note">These are on a research branch and not yet in the beta installer; they land here when they do.</p>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">Try it</p>
-      <h2>Now in beta testing.</h2>
-      <p>Omalexia has left the announcement stage: it runs all day on our own machines, and it is ready for more hands. Beta means the core works, the edges are still rough, and your bug reports decide what gets fixed first. On an Omarchy machine:</p>
-      <div class="cmd" id="cmd">
-        <pre><span class="prompt">$ </span>git clone https://github.com/thefreshoffice/omalexia.git
-<span class="prompt">$ </span>cd omalexia &amp;&amp; ./install.sh</pre>
-        <button class="button secondary" type="button" id="copyBtn">Copy</button>
-      </div>
-      <div class="copied" id="copied" aria-live="polite"></div>
-      <p class="note">Safe to re-run; <code>omalexia off</code> puts the visual changes back.</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/thefreshoffice/omalexia#omalexia">Installation instructions on GitHub →</a>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia/issues">Report what breaks →</a>
-      </div>
+      <p class="eyebrow">30 August 2026</p>
+      <h2>Point at it and listen.</h2>
+      <ul class="entries">
+        <li>Read from the word under the pointer: hover a paragraph, press <kbd>Alt</kbd>+<kbd>F10</kbd>, and reading starts there. No selection needed.</li>
+        <li><kbd>Alt</kbd>+<kbd>F10</kbd> now works in every window: when an app offers no text through any channel, OCR completes the grab ladder as the last resort.</li>
+        <li>The Ghostty terminal joins the exact grid, so read-along highlighting is character-precise there; Alacritty is covered by the fallbacks.</li>
+        <li>The endgame written down: bet on the standard accessibility interfaces, so per-app adapters can retire as apps catch up.</li>
+      </ul>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">More as we build</p>
-      <h2>What lands here next.</h2>
-      <ul class="later">
-        <li><span class="when">Now</span><span>Beta testing: Omalexia runs daily on our own machines. Install it from GitHub and tell us what breaks.</span></li>
-        <li><span class="when">New</span><span><a href="research.html">The speech research</a>: every engine we measured, what a native listener said, and why Dutch is the hard case.</span></li>
-        <li><span class="when">New</span><span><a href="changelog.html">The changelog</a>: what changed, and when, in plain words.</span></li>
-        <li><span class="when">Next</span><span>How it works: the read-aloud daemon, the dictation pipeline, the reading layout, and what each key does.</span></li>
+      <p class="eyebrow">28 August 2026</p>
+      <h2>Ask the window for its text.</h2>
+      <ul class="entries">
+        <li>The accessibility tree becomes a text backend: any app that exposes its text the standard way is asked for it directly, no pixels involved.</li>
+        <li>The foot terminal gets exact highlighting the same way: character positions from the terminal itself instead of reading the screen.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">26 and 27 August 2026</p>
+      <h2>The words light up as they are spoken.</h2>
+      <ul class="entries">
+        <li>Read-along highlighting born: while text is read aloud, the word being spoken is highlighted in the actual text on screen, in any app.</li>
+        <li>Locating words on screen made fast enough for dense screens, then faster: selections are found by their highlight colour instead of full OCR.</li>
+        <li>The marker follows when you scroll, stays in sync with the audio you actually hear, and no longer flickers or skips words.</li>
+        <li>Mark the word, the sentence, or both; browser selections take the fast path.</li>
+        <li>Reading survives a daemon restart mid-text.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">25 August 2026</p>
+      <h2>One calm workspace, eight Kokoro languages.</h2>
+      <ul class="entries">
+        <li>Reading mode moves the window to one clean workspace and restores everything on exit.</li>
+        <li>Kokoro switched on for all eight languages it actually speaks; only our own settings had limited it to English.</li>
+        <li>Measured Chatterbox Multilingual end to end and found the real bottleneck (the audio decoder, not the language model); planned the path to commercial-grade voice quality.</li>
+      </ul>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">24 August 2026</p>
+      <h2>Day one: the whole first cut.</h2>
+      <ul class="entries">
+        <li>The read-aloud daemon: two neural voices kept warm, speech about 0.1 s after the key press, sentence streaming, instant stop, language detected from the text. Registered as the system voice, so the browser's reader mode and the screen reader speak with it too.</li>
+        <li>Read in any language: voices download on demand, a language selector, wider detection.</li>
+        <li>Dictation tuned: the multilingual Parakeet model, audio ticks, filler-word cleanup in English and Dutch, a personal word list.</li>
+        <li>The calm screen: reading mode on one key, a paper tint, the Atkinson Hyperlegible reading font desktop-wide (OpenDyslexic one command away), bigger text everywhere.</li>
+        <li>The bar widget and its panel: read, stop, speed, voices, dictation, reading mode, font and text size in one place, plus plenty of panel polish.</li>
+        <li>Reading speed up to 4x, the stall between sentences removed, speed changes apply mid-text.</li>
+        <li>Measured the speech stack and the NPU; recorded the findings and a roadmap.</li>
+        <li>This site went up; the project moved into its own repository under thefreshoffice, MIT licensed, contributors welcomed.</li>
       </ul>
     </div>
   </section>
 
 </main>
-
 <footer>
   <div class="wrap">
     <div>Omalexia is built by <a href="https://github.com/thefreshoffice">Michael de By | The Fresh Office</a> and contributors on top of Omarchy Linux. Open source, MIT licence. Everything on this page is a statement of intent; the software is in active development.</div>

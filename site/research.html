@@ -3,8 +3,8 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Omalexia</title>
-<meta name="description" content="Omalexia is a dyslexia-first layer on Omarchy Linux: local text to speech, local dictation, and a calm, readable screen, one key each.">
+<title>Omalexia speech research</title>
+<meta name="description" content="How Omalexia chooses its voices: every local text to speech engine measured on one laptop, the listening verdicts, and why Dutch is the hard case.">
 <meta name="color-scheme" content="dark light">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -316,7 +316,7 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
   <div class="wrap">
     <a class="brand" href="index.html">OMA<span>LEXIA</span></a>
     <nav class="nav" aria-label="Site">
-      <a href="research.html">Research</a>
+      <a href="research.html" aria-current="page">Research</a>
       <a href="changelog.html">Changelog</a>
       <a href="https://github.com/thefreshoffice/omalexia">GitHub</a>
     </nav>
@@ -338,163 +338,195 @@ footer .links { display: flex; gap: 1.5rem; flex-wrap: wrap; font-family: var(--
 
   <section class="hero">
     <div class="wrap stack-lg">
-      <pre class="wordmark" aria-label="Omalexia">█████  █   █   ███   █      █████  █   █  █████   ███
-█   █  ██ ██  █   █  █      █       █ █     █    █   █
-█   █  █ █ █  █████  █      ████     █      █    █████
-█   █  █   █  █   █  █      █       █ █     █    █   █
-█████  █   █  █   █  █████  █████  █   █  █████  █   █</pre>
       <div class="stack">
-        <p class="eyebrow"><span class="pill">Beta</span> A dyslexia-first profile for Omarchy Linux · by Michael de By | The Fresh Office</p>
-        <h1>Linux that reads to you, listens to you, and stays calm.</h1>
-        <p class="lede">We are building the best operating system for dyslexic people, and for everyone whose eyes get tired before their day does.</p>
-        <p class="lede-sub">Omalexia layers three things on top of <a href="https://omarchy.org/">Omarchy</a>: a voice that reads anything, ears that type what you say, and a screen that gets out of the way. All of it runs on your own machine. Nothing leaves it.</p>
-      </div>
-      <div class="actions">
-        <button class="button" type="button" id="heroRead">Read this page aloud</button>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia">Install the beta from GitHub →</a>
-      </div>
-      <div class="keys" aria-label="The two keys">
-        <div><kbd>F9</kbd> talk</div>
-        <div><kbd>F10</kbd> listen</div>
-        <div><kbd>Super</kbd>+<kbd>R</kbd> reading mode</div>
-      </div>
-    </div>
-  </section>
-
-  <section class="goal">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">The goal</p>
-      <blockquote>Make the best operating system for dyslexics and alike: not an accessibility setting buried in a menu, but the default.</blockquote>
-      <p>Most computers treat reading as free and speaking as a feature. For a dyslexic person it is the other way round: decoding text costs effort every minute of the day, and the voice is the fast path. Omalexia starts from that. Hearing text, saying text and seeing text calmly are first-class, one key each, and they work in every app, the terminal included.</p>
-    </div>
-  </section>
-
-  <section class="shoutout">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">Credit where it is due</p>
-      <h2>Omarchy already does half the work.</h2>
-      <p>Before we added a single line, the <a href="https://omarchy.org/">Omarchy</a> team had already built something that helps dyslexic people every day. Tiling windows mean nothing overlaps and nothing hides: every window has its place, the keyboard moves you between them, and the screen stays tidy without effort. One consistent theme runs through every app. There is no clutter to decode and no hunting for the window you lost.</p>
-      <p>That focus is not only calmer, it is more fun. Omarchy is fast, opinionated and beautifully put together, and it makes the computer feel like a tool you own rather than a place you get lost in. Thank you, DHH and everyone who builds Omarchy. Omalexia exists because there was such a good foundation to build on.</p>
-    </div>
-  </section>
-
-  <section>
-    <div class="wrap stack-lg">
-      <p class="eyebrow">What we hold important</p>
-      <h2>Four things, in this order.</h2>
-      <div class="cards">
-        <article class="card">
-          <span class="tag">Local first</span>
-          <h3><span class="glyph">▶</span> The best text to speech</h3>
-          <p>Highlight anything, or just point at it, and press <kbd>F10</kbd>: you hear it within a tenth of a second, and the word being spoken is highlighted in the text while you listen. Web pages, mail, PDFs, code, a screenshot of a slide: if it is on the screen it can be read. The language is detected from the text itself, and you can add a voice for any language you read.</p>
-          <ul>
-            <li>Neural voices running on the laptop, no cloud, no account</li>
-            <li>The same voice everywhere: browser reader mode, screen reader, any app that talks</li>
-            <li>Stop, speed up, slow down without looking</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">Local first</span>
-          <h3><span class="glyph">●</span> Dictation that just works</h3>
-          <p>Hold <kbd>F9</kbd>, say it, let go: the words land where your cursor is, with punctuation, in Dutch or English, in a terminal or a text box alike.</p>
-          <ul>
-            <li>A tick you can hear when it starts and stops listening</li>
-            <li>Your own word list: “fresh office” becomes “The Fresh Office”</li>
-            <li>Filler words gone, first letter capitalised, nothing sent anywhere</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">Calm by default</span>
-          <h3><span class="glyph">▭</span> A screen you can read when tired</h3>
-          <p>Letters that wobble at 22:00 are not a character flaw; they are a layout problem. When you want to keep working we have you covered: lines of a readable length, the window you are reading centred and the rest dimmed, a warm paper tint instead of glare, and letterforms that stay apart.</p>
-          <ul>
-            <li>Reading mode on one key, narrow single windows on wide monitors</li>
-            <li>A distinct, plain typeface as the desktop default; dyslexia fonts available, never forced</li>
-            <li>Bigger text everywhere with one setting, reduced motion when you want it</li>
-          </ul>
-        </article>
-        <article class="card">
-          <span class="tag">In the open</span>
-          <h3><span class="glyph">▤</span> Choices you can check</h3>
-          <p>Every choice is measured before it is made and written down afterwards: which voice starts fastest on a CPU, which fonts the research actually supports, why line length matters more than font shape. As we build, the how and the why land here.</p>
-          <ul>
-            <li>Built on Omarchy, installed as one opt-in profile</li>
-            <li>Everything reversible with one command</li>
-            <li>Source, notes and numbers on GitHub</li>
-          </ul>
-        </article>
+        <p class="eyebrow">Research notes · Text to speech</p>
+        <h1>The hunt for a voice worth hearing all day.</h1>
+        <p class="lede">The bar: voices a listener would rate above eight out of ten, in as many languages as possible, running on your own machine.</p>
+        <p class="lede-sub">This is the long version of the speech research behind Omalexia. Everything below was measured on one reference laptop, an Intel Core Ultra 7 255H (Arrow Lake) with an Intel Arc iGPU and no NVIDIA card, between 24 and 31 August 2026. Claims from vendors and blogs were re-verified against model cards, licences and papers before they were believed. The raw notes live in <a href="https://github.com/thefreshoffice/omalexia">the repository</a>.</p>
       </div>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">How we work</p>
-      <h2>Experience first, then optimise.</h2>
-      <div class="how">
-        <div class="stack">
-          <h3>Measured, not assumed</h3>
-          <p>A voice that takes a second to start is a voice you stop using. We time everything on the machines we actually carry and pick what is instant, then offer the richer options as a choice.</p>
-        </div>
-        <div class="stack">
-          <h3>One key, everywhere</h3>
-          <p>No app-specific plugins to remember. Reading, dictation and reading mode are keys on the keyboard and buttons in the bar, and they work in the same way in a browser, an editor and a terminal.</p>
-        </div>
-        <div class="stack">
-          <h3>Yours to keep</h3>
-          <p>Speech in both directions runs on your own computer. That is faster, it works on a train, and what you read and say stays with you.</p>
-        </div>
-      </div>
-    </div>
-  </section>
-
-  <section class="open">
-    <div class="wrap stack-lg">
-      <p class="eyebrow">Open source, open door</p>
-      <h2>Help make this the best accessibility add-on for Omarchy.</h2>
-      <p>Omalexia is open source under the MIT licence, and everyone who wants to help is welcome: dyslexic readers who can tell us what actually works, people who know voices and speech models, people who care about fonts and layout, translators, testers, and anyone who just wants Omarchy to be kinder to more people. Ideas, bug reports and pull requests all count.</p>
-      <p class="lede-sub">The code, the notes and the numbers are in one repository. Start with an issue if you are unsure; start with a pull request if you are not.</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/thefreshoffice/omalexia">Read the code →</a>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia/issues">Open an issue →</a>
-      </div>
+      <p class="eyebrow">Why this matters</p>
+      <h2>For a dyslexic reader, the voice is the interface.</h2>
+      <p>Text to speech is not a convenience feature here; it is how most text gets read. That splits the problem in two. The voice has to be <strong>instant</strong>, because a second of delay per press is a feature you stop using, and it has to be <strong>good</strong>, because a tiring voice is a voice you turn off by the afternoon. Latency turned out to be solvable in a week. Quality, in every language a household actually speaks, is the open hunt this page documents.</p>
+      <p>Dutch goes first, because it is the language the current open voices serve worst, then German, French, Spanish, Italian, Polish and the rest of Europe. Cloud voices are out of scope except as a quality reference: what you read stays on your machine.</p>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">Try it</p>
-      <h2>Now in beta testing.</h2>
-      <p>Omalexia has left the announcement stage: it runs all day on our own machines, and it is ready for more hands. Beta means the core works, the edges are still rough, and your bug reports decide what gets fixed first. On an Omarchy machine:</p>
-      <div class="cmd" id="cmd">
-        <pre><span class="prompt">$ </span>git clone https://github.com/thefreshoffice/omalexia.git
-<span class="prompt">$ </span>cd omalexia &amp;&amp; ./install.sh</pre>
-        <button class="button secondary" type="button" id="copyBtn">Copy</button>
+      <p class="eyebrow">24 August · Round one</p>
+      <h2>Picking the everyday stack.</h2>
+      <p>The beta ships <a href="https://github.com/OHF-Voice/piper1-gpl">Piper</a> voices kept warm in a small daemon, so speech starts about a tenth of a second after the key press. That choice came from timing every installed voice, one sentence, synthesised after a warm-up pass:</p>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Voice</th><th class="num">Load</th><th class="num">First audio</th><th class="num">Real-time factor</th></tr></thead>
+          <tbody>
+            <tr><td>en_US-lessac-medium</td><td class="num">0.84 s</td><td class="num">0.32 s</td><td class="num">0.051</td></tr>
+            <tr><td>en_US-lessac-high</td><td class="num">1.35 s</td><td class="num">3.46 s</td><td class="num">0.543</td></tr>
+            <tr><td>en_GB-alba-medium</td><td class="num">1.44 s</td><td class="num">0.38 s</td><td class="num">0.058</td></tr>
+            <tr><td>nl_NL-pim-medium</td><td class="num">1.34 s</td><td class="num">0.42 s</td><td class="num">0.055</td></tr>
+            <tr><td>nl_NL-mls-medium</td><td class="num">1.41 s</td><td class="num">0.72 s</td><td class="num">0.069</td></tr>
+            <tr><td>nl_BE-nathalie-medium</td><td class="num">1.24 s</td><td class="num">0.35 s</td><td class="num">0.063</td></tr>
+          </tbody>
+        </table>
       </div>
-      <div class="copied" id="copied" aria-live="polite"></div>
-      <p class="note">Safe to re-run; <code>omalexia off</code> puts the visual changes back.</p>
-      <div class="actions">
-        <a class="button" href="https://github.com/thefreshoffice/omalexia#omalexia">Installation instructions on GitHub →</a>
-        <a class="button secondary" href="https://github.com/thefreshoffice/omalexia/issues">Report what breaks →</a>
+      <p>A real-time factor below 1.0 means the engine synthesises faster than the audio plays. The detail that shaped everything after: Piper emits <strong>one chunk per sentence</strong>, so the wait before the first word is the cost of synthesising the whole first sentence. The 3.46 s worst case above is a deliberately long 24-word sentence through a "high" voice.</p>
+      <h3>The first-sentence discovery</h3>
+      <p>Synthesis and playback are pipelined: each sentence is handed to the audio system the moment it is ready. Timing a four-sentence paragraph through the richer <code>lessac-high</code> voice showed where the cost really sits. "Margin" is how long each chunk was ready before playback needed it:</p>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Sentence</th><th class="num">Ready at</th><th class="num">Audio length</th><th class="num">Needed at</th><th class="num">Margin</th></tr></thead>
+          <tbody>
+            <tr><td>1</td><td class="num">0.93 s</td><td class="num">2.50 s</td><td class="num">0.00 s</td><td class="num"><strong>-0.93 s</strong></td></tr>
+            <tr><td>2</td><td class="num">2.15 s</td><td class="num">2.54 s</td><td class="num">2.50 s</td><td class="num">+0.35 s</td></tr>
+            <tr><td>3</td><td class="num">3.35 s</td><td class="num">2.96 s</td><td class="num">5.04 s</td><td class="num">+1.69 s</td></tr>
+            <tr><td>4</td><td class="num">4.67 s</td><td class="num">3.04 s</td><td class="num">8.00 s</td><td class="num">+3.33 s</td></tr>
+          </tbody>
+        </table>
       </div>
+      <p>The margin is negative exactly once, on the first sentence, and then grows without bound: at a real-time factor of 0.54 the buffer gains about half a second of slack per sentence spoken. A high voice never stutters on a long document; it just starts 0.7 s later. So richer voices were being rejected for the wrong reason, and the fixes are cheap: split the opening sentence at its first comma, speak sentence one with a fast voice and switch after it, or start synthesising on selection instead of on keypress. The same argument rehabilitates <a href="https://huggingface.co/hexgrad/Kokoro-82M">Kokoro-82M</a> (real-time factor about 0.35), which a day later also turned out to speak eight languages, not one: only our own engine gate said "English only".</p>
     </div>
   </section>
 
   <section>
     <div class="wrap stack-lg">
-      <p class="eyebrow">More as we build</p>
-      <h2>What lands here next.</h2>
-      <ul class="later">
-        <li><span class="when">Now</span><span>Beta testing: Omalexia runs daily on our own machines. Install it from GitHub and tell us what breaks.</span></li>
-        <li><span class="when">New</span><span><a href="research.html">The speech research</a>: every engine we measured, what a native listener said, and why Dutch is the hard case.</span></li>
-        <li><span class="when">New</span><span><a href="changelog.html">The changelog</a>: what changed, and when, in plain words.</span></li>
-        <li><span class="when">Next</span><span>How it works: the read-aloud daemon, the dictation pipeline, the reading layout, and what each key does.</span></li>
+      <p class="eyebrow">24 August · The NPU detour</p>
+      <h2>The accelerator helps ears, not voices.</h2>
+      <p>The laptop has an Intel NPU, so the obvious question got a day: can it make speech better? For <strong>dictation</strong>, yes. An OpenVINO build of the exact Parakeet model Omalexia configures runs at 25.7x real time on this NPU generation against 5 to 8x on CPU, at an identical 3.7% word error rate: three to five times the throughput at lower power.</p>
+      <p>For <strong>speech</strong>, no, twice over. Structurally, text to speech takes variable-length text and produces variable-length audio, the opposite of the fixed windows an NPU wants, and no tested Intel NPU path for a TTS decoder exists. And even if it worked, the default voices already synthesise twenty times faster than they need to; an NPU cannot make a voice sound better, only produce the same audio using less power. The ordering that fell out: solve quality first, and treat the NPU as the thing that makes the answer affordable afterwards, by moving dictation off the CPU to pay for a heavier voice.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">30 August · The multilingual hunt</p>
+      <h2>Trust no ranking: verify everything.</h2>
+      <p>The starting frame was a widely shared "best TTS models of 2026" ranking of 24 local models. It is vendor content: the publisher's own model sits at number two, scored by the publisher. So every claim that mattered got re-verified from model cards, LICENSE files and papers. A sample of what that did:</p>
+      <ul class="entries">
+        <li>"OmniVoice by OpenVox, 646 languages, Apache, 8.4" is three-quarters wrong. The model is real and remarkable: k2-fsa OmniVoice, from the Next-gen Kaldi group, genuinely 646 languages with 2,264 hours of Dutch in training. But OpenVox did not make it, the 8.4 is their own self-published score, and the weights are CC-BY-NC; only the code is Apache.</li>
+        <li>Qwen3-TTS is genuinely Apache-licensed, and supports ten languages. Dutch is not one of them.</li>
+        <li>Higgs Audio "8.5, 100 languages": the version with that claim has no published language list, a research-only licence, and needs a 24 GB GPU.</li>
+        <li>Fish Speech / OpenAudio lists Dutch on the model card, but the paper's own training-data description never mentions it, the weights are non-commercial, and the CPU path is broken in practice.</li>
+        <li>CosyVoice 3: the model you can download is not the model the paper's quality numbers describe, and it has no Dutch either way.</li>
+      </ul>
+      <h3>Every Dutch-capable model, verified</h3>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Model</th><th class="num">Languages</th><th>Weights licence</th><th>Runs on this machine?</th><th>Verdict</th></tr></thead>
+          <tbody>
+            <tr><td>Supertonic 3</td><td class="num">31</td><td>OpenRAIL-M, commercial OK</td><td>Yes: RTF 0.36 to 0.73 on CPU</td><td><span class="chip good">Very good</span> front-runner</td></tr>
+            <tr><td>OmniVoice (k2-fsa)</td><td class="num">646</td><td>CC-BY-NC, code Apache</td><td>CPU hopeless; Arc iGPU yes</td><td><span class="chip good">Very good</span> needs the iGPU</td></tr>
+            <tr><td>Chatterbox Multilingual V3</td><td class="num">23</td><td>MIT</td><td>RTF 2.4 measured; fixable</td><td><span class="chip open">Verdict open</span></td></tr>
+            <tr><td>VoxCPM2 (OpenBMB)</td><td class="num">30</td><td>Apache-2.0</td><td>No: RTF 36 to 93</td><td><span class="chip bad">Rejected</span> on sound</td></tr>
+            <tr><td>Piper nl (current stack)</td><td class="num">~45</td><td>Permissive</td><td>Yes, instantly</td><td>The baseline to beat</td></tr>
+            <tr><td>OuteTTS 1.0 1B</td><td class="num">23</td><td>CC-BY-NC-SA</td><td>Yes, via llama.cpp</td><td>Risky: altered words reported</td></tr>
+            <tr><td>OpenAudio S1-mini</td><td class="num">13</td><td>CC-BY-NC-SA</td><td>Broken CPU path</td><td>Skip</td></tr>
+            <tr><td>ZONOS2 (Zyphra)</td><td class="num">34</td><td>Sources conflict</td><td>No: NVIDIA only, 8B</td><td>Skip on this machine</td></tr>
+            <tr><td>XTTS v2</td><td class="num">17</td><td>Non-commercial, issuer defunct</td><td>Possible, slow</td><td>Benchmark reference only</td></tr>
+            <tr><td>Voxtral TTS 4B (Mistral)</td><td class="num">9</td><td>CC-BY-NC</td><td>No: 16 GB GPU required</td><td>Quality reference</td></tr>
+            <tr><td>Parler mini multilingual</td><td class="num">8</td><td>Apache-2.0</td><td>Untested</td><td>Curiosity</td></tr>
+            <tr><td>MMS-TTS-nld (Meta)</td><td class="num">1107</td><td>CC-BY-NC</td><td>Trivially</td><td>Quality too low</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="note">Verified as having no Dutch, and ruled out for the goal regardless of quality: Kokoro, CosyVoice 3, Qwen3-TTS, Higgs Audio v2, IndexTTS, MeloTTS, Orpheus, MegaTTS3, F5-TTS (no Dutch finetune exists anywhere, a verified gap) and a dozen more. On the watch list: Kyutai Pocket TTS, 100M parameters, MIT, genuinely real time on two CPU cores, five languages added this spring and its training code open since 25 August 2026, so Dutch may well come, or be brought.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">The uncomfortable finding</p>
+      <h2>Dutch is the hard case, on the record.</h2>
+      <p><strong>No open-weight model has credible published evidence of 8/10 subjective quality in Dutch today.</strong> That is not a mood, it is what the sources say when you chase them:</p>
+      <ul class="entries">
+        <li>The arena rankings everyone cites are English-only by design, so every arena score in every blog says nothing about Dutch.</li>
+        <li>The strongest controlled datapoint is Mistral's Voxtral TTS paper: blind native-speaker preference against ElevenLabs across nine languages. The open model wins Spanish with 87.8%, German with 72.0%, Italian and French narrowly. Dutch: 49.4%, <strong>the only language of the nine where the open model loses</strong>.</li>
+        <li>One genuine Dutch head-to-head exists, buried in Supertonic's README: per-language word error rates. Dutch: OmniVoice 0.77, VoxCPM2 0.84, Supertonic 3 1.47. Intelligibility rather than naturalness, and self-published, but it says all three read Dutch accurately, which Piper's nl_NL demonstrably does not.</li>
+        <li>The community record on Piper's Dutch is damning for the large-data nl_NL voices ("garbled", "unusable", 2023 through 2026), while the two Flemish voices trained on small curated recordings are consistently rated the best of the open Dutch bunch. Curation beats scale; remember that for the finetuning section.</li>
       </ul>
     </div>
   </section>
 
-</main>
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">31 August · Listening</p>
+      <h2>Then a native listener decides.</h2>
+      <p>Numbers shortlist; ears choose. The shortlisted engines each read the same Dutch texts, and a native listener in the household gave verdicts blind to the measurements:</p>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Engine</th><th>Verdict</th><th>Consequence</th></tr></thead>
+          <tbody>
+            <tr><td>Supertonic 3</td><td><span class="chip good">Very good</span></td><td>Front-runner: also real time on a bare CPU</td></tr>
+            <tr><td>OmniVoice</td><td><span class="chip good">Very good</span></td><td>Justifies the GPU work below</td></tr>
+            <tr><td>VoxCPM2</td><td><span class="chip bad">Rejected</span></td><td>Out on sound alone; also 36 to 93x too slow</td></tr>
+            <tr><td>Piper nl_NL</td><td><span class="chip open">Mid</span></td><td>The Flemish nl_BE voices are clearly better; they become the preferred Dutch fallback</td></tr>
+            <tr><td>Chatterbox</td><td><span class="chip open">Verdict open</span></td><td>Samples rendered, listen pending; its acceleration work waits on this</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
 
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">31 August · Measured here</p>
+      <h2>The same texts, every engine, one machine.</h2>
+      <p>Protocol: idle machine, one engine at a time, the same three Dutch texts (a short sentence, a medium one, a full paragraph), warm model unless noted. RTF is the real-time factor per text; below 1.0 is faster than the audio plays.</p>
+      <div class="tblwrap">
+        <table>
+          <thead><tr><th>Engine</th><th class="num">Load</th><th class="num">Peak RAM</th><th class="num">RTF short / medium / paragraph</th></tr></thead>
+          <tbody>
+            <tr><td>Piper nl_BE-nathalie</td><td class="num">per call</td><td class="num">253 MB</td><td class="num">0.43 / 0.29 / 0.20</td></tr>
+            <tr><td>Supertonic 3</td><td class="num">1.0 s</td><td class="num">560 MB</td><td class="num">0.94 / 0.66 / 0.42</td></tr>
+            <tr><td>Chatterbox q4 LM + fp32 decoder</td><td class="num">34 s</td><td class="num">2.0 GB</td><td class="num">3.19 / 2.81 / 2.46</td></tr>
+            <tr><td>OmniVoice on CPU, 16 steps</td><td class="num">1.1 s</td><td class="num">2.9 GB</td><td class="num">40.4 / 45.0 / 13.8</td></tr>
+            <tr><td>OmniVoice on Arc iGPU fp16, 16 steps</td><td class="num">2.2 s</td><td class="num">4.2 GB</td><td class="num">0.61 / 0.53 / 0.48</td></tr>
+            <tr><td>OmniVoice on Arc iGPU fp16, 32 steps</td><td class="num">2.2 s</td><td class="num">4.2 GB</td><td class="num">1.04 / 1.00 / 0.86</td></tr>
+            <tr><td>VoxCPM2 (bf16, torch)</td><td class="num">370 s first run</td><td class="num">~5.9 GB</td><td class="num">93 / 41 / 36</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <p><strong>The breakthrough in that table:</strong> installing Intel's compute runtime let PyTorch's XPU backend see the Arc iGPU that ships inside this ordinary laptop CPU, and OmniVoice went from 40 to 70 times too slow to comfortably real time, 25 to 75x faster than CPU. A 646-language engine that a native listener rates very good, running in real time on an integrated GPU, is the single most consequential measurement of the whole hunt.</p>
+      <p class="note">Piper stays the latency and footprint king: it is the only engine here that is instant from cold, which is why it remains the floor of the fallback ladder.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">Acceleration notes</p>
+      <h2>Making the heavy ones fast.</h2>
+      <p>For Chatterbox, the measurements split the pipeline cleanly: its language model runs at RTF 0.45 (fine), and the flow-matching audio decoder at 1.9 (the whole blocker). Inspecting our ONNX export showed the 10-step solver unrolled inline, about 21,000 of the graph's 24,000 nodes; the repo ships variants with a 1-step decoder, which would cut roughly 85% of decoder compute and project the total to RTF 0.75, real time on CPU alone. Plan B is running that decoder on the iGPU through OpenVINO (a 2 to 4x win on this model class is documented; our graph's awkward operators are counted: one STFT, 58 ScatterND).</p>
+      <p>Two negative results worth keeping: INT8 quantisation of TTS audio decoders audibly distorts, so decoders stay FP16 while token models can quantise; and the NPU is a dead end for decoders on today's toolchains, confirmed rather than assumed.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">Plan B</p>
+      <h2>If nothing clears the bar: train one.</h2>
+      <p>The Dutch data situation is decent and the recipe is proven at small scale. CML-TTS offers about 645 hours of Dutch under CC-BY, filtered and aligned specifically for TTS: the bulk-adaptation corpus. The cautionary tale sits right next to it: the Piper voice trained straight on 1,580 hours of raw audiobook narration became the worst-rated Dutch voice in the ecosystem. Scale without curation demonstrably fails.</p>
+      <p>The recipe that matches all the evidence: bulk-adapt a strong multilingual backbone on CML-TTS Dutch, then finish with a small finetune on one clean single-speaker set (several exist openly, 5 to 14 hours each). That two-stage split is precisely what separated the liked Flemish Piper voices from the disliked large-data ones. And the field is open: nobody anywhere has published a Dutch finetune of a modern flow-matching model, and no Dutch or Belgian research institute has published an open TTS model at all.</p>
+    </div>
+  </section>
+
+  <section>
+    <div class="wrap stack-lg">
+      <p class="eyebrow">Where the stack stands</p>
+      <h2>Instant today, beautiful next.</h2>
+      <p>The beta you can install today speaks with warm Piper voices (instant, about 45 languages, mid quality) and optional Kokoro for eight languages. On a research branch, in testing before it reaches the installer: Supertonic 3 and OmniVoice wired into the daemon as first-class engines with a fallback ladder (OmniVoice, then Supertonic, then Piper), and <code>omalexia voice advise</code>, which reads your machine's CPU, RAM and GPU and recommends the best engines it can sustain, so a weaker laptop gets Supertonic and a GPU machine gets the 646-language engine.</p>
+      <p class="lede-sub">Still open: the Chatterbox listening verdict, an ear-check of OmniVoice's faster 16-step setting, and then re-deciding the default voice per language. The <a href="changelog.html">changelog</a> tracks what lands.</p>
+      <div class="actions">
+        <a class="button" href="https://github.com/thefreshoffice/omalexia">Read the code and notes →</a>
+        <a class="button secondary" href="changelog.html">See the changelog →</a>
+      </div>
+    </div>
+  </section>
+
+</main>
 <footer>
   <div class="wrap">
     <div>Omalexia is built by <a href="https://github.com/thefreshoffice">Michael de By | The Fresh Office</a> and contributors on top of Omarchy Linux. Open source, MIT licence. Everything on this page is a statement of intent; the software is in active development.</div>

@@ -252,9 +252,11 @@ omalexia/
 ├── plugin/                          Omarchy shell bar widget + panel (thefreshoffice.omalexia)
 │   ├── manifest.json, BarWidget.qml, Panel.qml, Service.qml
 │   └── status.py                    snapshot + actions helper the QML calls
-├── site/                            the omalexia announcement page (static, self-contained)
-│   ├── index.html
-│   └── README.md                    hosting: GitHub Pages, Cloudflare/Netlify, or nginx
+├── site/                            omalexia.org (static, self-contained, GitHub Pages)
+│   ├── index.html                   the announcement, now in beta
+│   ├── research.html                the speech research and the numbers
+│   ├── changelog.html               what changed, and when
+│   └── README.md                    hosting and DNS notes
 └── config/
     ├── hypr/omalexia.lua            keys, dimming, fonts, env  → ~/.config/hypr/omalexia.lua
     ├── voxtype/config.toml          tuned dictation             → ~/.config/voxtype/config.toml

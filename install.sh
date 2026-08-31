@@ -76,6 +76,8 @@ for f in bin/*; do
   install -m 755 "$f" "$BIN_DIR/$(basename "$f")"
 done
 install -m 644 config/kokoro/worker.py "$DATA_DIR/kokoro-worker.py"
+install -m 644 config/supertonic/worker.py "$DATA_DIR/supertonic-worker.py"
+install -m 644 config/omnivoice/worker.py "$DATA_DIR/omnivoice-worker.py"
 note "installed $(find bin -maxdepth 1 -type f -printf '%f ')to ~/.local/bin"
 
 [[ -f $CONFIG_DIR/config.toml ]] || install -m 644 config/omalexia.toml "$CONFIG_DIR/config.toml"

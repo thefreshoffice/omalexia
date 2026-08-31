@@ -54,6 +54,8 @@ STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state")
 DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") / "omalexia"
 VOICES_DIR = DATA_HOME / "voices"
 KOKORO_DIR = DATA_HOME / "kokoro"
+SUPERTONIC_DIR = DATA_HOME / "supertonic"
+OMNIVOICE_DIR = DATA_HOME / "omnivoice"
 
 DEFAULT_CONFIG = {
     "tts": {
@@ -67,6 +69,8 @@ DEFAULT_CONFIG = {
         "voices": {"en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium"},
         "engines": {},
         "kokoro": {"voice": "af_heart"},
+        "supertonic": {"voice": "F1"},
+        "omnivoice": {"steps": 16},
     }
 }
 
@@ -92,7 +96,7 @@ def load_config() -> dict:
         for key in ("speed", "default_language", "highlight_delay"):
             if key in tts:
                 cfg["tts"][key] = tts[key]
-        for key in ("voices", "engines", "kokoro"):
+        for key in ("voices", "engines", "kokoro", "supertonic", "omnivoice"):
             if isinstance(tts.get(key), dict):
                 cfg["tts"][key].update(tts[key])
     # Runtime overrides (set from the bar panel) beat the file.
@@ -571,6 +575,116 @@ class KokoroEngine:
                 yield data
 
 
+# Languages Supertonic 3 ships (31, from the model card).
+SUPERTONIC_LANGS = set(
+    "ar bg cs da de el en es et fi fr hi hr hu id it ja ko lt lv nl pl pt "
+    "ro ru sk sl sv tr uk vi".split())
+
+
+class EngineWorker:
+    """One long-lived worker subprocess per heavy engine (Supertonic,
+    OmniVoice), shared across languages so a second language does not cost
+    a second model. Same stdin/stdout protocol as the Kokoro worker; the
+    ready line may carry the PCM sample rate."""
+
+    _instances: dict[str, "EngineWorker"] = {}
+    _instances_lock = threading.Lock()
+
+    @classmethod
+    def shared(cls, kind: str, directory: Path, default_rate: int):
+        with cls._instances_lock:
+            inst = cls._instances.get(kind)
+            if inst is None or inst.proc.poll() is not None:
+                inst = cls._instances[kind] = cls(kind, directory, default_rate)
+            return inst
+
+    def __init__(self, kind: str, directory: Path, default_rate: int):
+        python = directory / ".venv" / "bin" / "python"
+        worker = directory / "worker.py"
+        if not python.exists() or not worker.exists():
+            raise FileNotFoundError(
+                f"{kind} is not installed (run: omalexia voice install {kind})")
+        self.proc = subprocess.Popen(
+            [str(python), str(worker)],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=sys.stderr,
+            cwd=directory,
+        )
+        self.lock = threading.Lock()
+        line = self.proc.stdout.readline()
+        if not line.startswith(b"ready"):
+            raise RuntimeError(f"{kind} worker failed to start")
+        parts = line.split()
+        self.rate = int(parts[1]) if len(parts) > 1 else default_rate
+        log(f"{kind}: worker ready ({self.rate} Hz)")
+
+
+class WorkerEngine:
+    """Engine for one language, backed by a shared EngineWorker."""
+
+    name = ""
+    directory: Path
+    default_rate = 24000
+    gap_ms = 0
+
+    def __init__(self, voice: str | None, lang: str, extra: dict | None = None):
+        self.voice_name = voice or ""
+        self.lang = lang
+        self.extra = extra or {}
+        self.worker = EngineWorker.shared(self.name, self.directory, self.default_rate)
+        self.rate = self.worker.rate
+        log(f"{self.name}: engine for {lang}" + (f" ({voice})" if voice else ""))
+
+    @property
+    def proc(self):
+        # reload()/eviction kill engines via .proc; the shared worker dies
+        # with the last engine holding it, and shared() restarts it on need.
+        return self.worker.proc
+
+    def synthesize(self, text: str, speed: float, cancel: threading.Event):
+        req = json.dumps({"text": text, "voice": self.voice_name, "speed": speed,
+                          "lang": self.lang, **self.extra})
+        worker = self.worker
+        if worker.proc.poll() is not None:
+            worker = self.worker = EngineWorker.shared(
+                self.name, self.directory, self.default_rate)
+            self.rate = worker.rate
+        with worker.lock:
+            worker.proc.stdin.write(req.encode() + b"\n")
+            worker.proc.stdin.flush()
+            while True:
+                header = worker.proc.stdout.read(4)
+                if len(header) < 4:
+                    return
+                n = int.from_bytes(header, "little")
+                if n == 0:
+                    return
+                data = worker.proc.stdout.read(n)
+                if cancel.is_set():
+                    # Drain the rest so the worker stays in sync.
+                    continue
+                yield data
+
+
+class SupertonicEngine(WorkerEngine):
+    """Supertonic 3 (99M flow matching, 31 languages, real time on CPU)."""
+
+    name = "supertonic"
+    directory = SUPERTONIC_DIR
+    default_rate = 44100
+    gap_ms = 40
+
+
+class OmniVoiceEngine(WorkerEngine):
+    """OmniVoice 0.6B (646 languages); needs a GPU backend to be real time."""
+
+    name = "omnivoice"
+    directory = OMNIVOICE_DIR
+    default_rate = 24000
+    gap_ms = 60
+
+
 # --------------------------------------------------------------------------
 # Player
 # --------------------------------------------------------------------------
@@ -710,6 +824,22 @@ class Daemon:
                 engine = KokoroEngine(kokoro_voice, lang)
             except Exception as exc:  # noqa: BLE001
                 log(f"kokoro unavailable, falling back to piper: {exc}")
+        elif wanted == "omnivoice":
+            steps = tts["omnivoice"].get("steps", 16)
+            try:
+                engine = OmniVoiceEngine(None, lang, extra={"steps": steps})
+            except Exception as exc:  # noqa: BLE001
+                log(f"omnivoice unavailable, falling back: {exc}")
+                wanted = "supertonic"  # best remaining quality, if installed
+        if engine is None and wanted == "supertonic":
+            if lang in SUPERTONIC_LANGS:
+                voice = tts["supertonic"].get(lang) or tts["supertonic"].get("voice")
+                try:
+                    engine = SupertonicEngine(voice, lang)
+                except Exception as exc:  # noqa: BLE001
+                    log(f"supertonic unavailable, falling back to piper: {exc}")
+            else:
+                log(f"supertonic does not speak '{lang}'; falling back to piper")
         if engine is None:
             voice = tts["voices"].get(lang)
             if not voice:
@@ -765,6 +895,10 @@ class Daemon:
                     and tts["voices"].get(lang) == old_tts["voices"].get(lang)
                     and tts["engines"].get(lang, "piper") == old_tts["engines"].get(lang, "piper")
                     and (tts["engines"].get(lang) != "kokoro" or tts["kokoro"] == old_tts["kokoro"])
+                    and (tts["engines"].get(lang) != "supertonic"
+                         or tts["supertonic"] == old_tts["supertonic"])
+                    and (tts["engines"].get(lang) != "omnivoice"
+                         or tts["omnivoice"] == old_tts["omnivoice"])
                 )
                 if unchanged:
                     kept[lang] = engine

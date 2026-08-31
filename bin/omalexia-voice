@@ -9,9 +9,12 @@ Usage:
   omalexia-voice catalog [LANG]             voices available for download
   omalexia-voice install NAME [NAME...]     download Piper voices (e.g. nl_NL-pim-medium)
   omalexia-voice install kokoro             install the optional Kokoro English engine
+  omalexia-voice install supertonic         install Supertonic 3 (31 languages, CPU real time)
+  omalexia-voice install omnivoice          install OmniVoice (646 languages, needs a GPU)
   omalexia-voice set LANG NAME              use NAME for that language (installs it if needed)
-  omalexia-voice engine LANG piper|kokoro   pick the engine (kokoro speaks
-                                            en es fr hi it ja pt zh)
+  omalexia-voice engine LANG ENGINE         pick piper, kokoro, supertonic or
+                                            omnivoice for a language
+  omalexia-voice advise                     recommend engines for this machine's specs
   omalexia-voice language auto|LANG         default when the language cannot be detected
   omalexia-voice test [LANG]                say a test sentence
 
@@ -39,6 +42,12 @@ DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or HOME / ".local" / "share") /
 VOICES_DIR = DATA_HOME / "voices"
 KOKORO_DIR = DATA_HOME / "kokoro"
 KOKORO_LANGS = ("en", "es", "fr", "hi", "it", "ja", "pt", "zh")
+SUPERTONIC_DIR = DATA_HOME / "supertonic"
+OMNIVOICE_DIR = DATA_HOME / "omnivoice"
+SUPERTONIC_LANGS = tuple(sorted(
+    "ar bg cs da de el en es et fi fr hi hr hu id it ja ko lt lv nl pl pt "
+    "ro ru sk sl sv tr uk vi".split()))
+ENGINES = ("piper", "kokoro", "supertonic", "omnivoice")
 KOKORO_FILES = {
     "kokoro-v1.0.onnx": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/kokoro-v1.0.onnx",
     "voices-v1.0.bin": "https://github.com/thewh1teagle/kokoro-onnx/releases/download/model-files-v1.0/voices-v1.0.bin",
@@ -113,6 +122,8 @@ DEFAULTS = {
         "voices": {"en": "en_US-lessac-medium", "nl": "nl_NL-pim-medium"},
         "engines": {},
         "kokoro": {"voice": "af_heart"},
+        "supertonic": {"voice": "F1"},
+        "omnivoice": {"steps": 16},
     }
 }
 
@@ -124,7 +135,7 @@ def load() -> dict:
         for k in ("speed", "default_language"):
             if k in user:
                 cfg["tts"][k] = user[k]
-        for k in ("voices", "engines", "kokoro"):
+        for k in ("voices", "engines", "kokoro", "supertonic", "omnivoice"):
             if isinstance(user.get(k), dict):
                 cfg["tts"][k].update(user[k])
     return cfg
@@ -154,6 +165,10 @@ def save(cfg: dict):
     lines += [f"{k} = {toml_value(v)}" for k, v in tts["engines"].items()]
     lines += ["", "[tts.kokoro]"]
     lines += [f"{k} = {toml_value(v)}" for k, v in tts["kokoro"].items()]
+    lines += ["", "[tts.supertonic]"]
+    lines += [f"{k} = {toml_value(v)}" for k, v in tts["supertonic"].items()]
+    lines += ["", "[tts.omnivoice]"]
+    lines += [f"{k} = {toml_value(v)}" for k, v in tts["omnivoice"].items()]
     CONFIG_PATH.write_text("\n".join(lines) + "\n")
     reload_daemon()
 
@@ -207,6 +222,99 @@ def install_kokoro() -> bool:
         print(f"Downloading {name} …")
         urllib.request.urlretrieve(url, target)
     print("Kokoro installed. Enable it with: omalexia voice engine en kokoro")
+    return True
+
+
+def _engine_venv(directory: Path, worker_stem: str, packages: list[str],
+                 index_url: str | None = None) -> bool:
+    """Create DIRECTORY/.venv (uv python 3.12 when available), copy the
+    worker script next to it, and pip-install PACKAGES."""
+    directory.mkdir(parents=True, exist_ok=True)
+    worker_src = Path(os.environ.get(f"OMALEXIA_{worker_stem.upper()}_WORKER")
+                      or DATA_HOME / f"{worker_stem}-worker.py")
+    if not worker_src.exists():
+        print(f"{worker_stem} worker script not found; reinstall omalexia", file=sys.stderr)
+        return False
+    (directory / "worker.py").write_text(worker_src.read_text())
+    venv = directory / ".venv"
+    have_uv = subprocess.run(["which", "uv"], capture_output=True, check=False).returncode == 0
+    if not (venv / "bin" / "python").exists():
+        cmd = ["uv", "venv", "--python", "3.12", str(venv)] if have_uv else \
+            ["python3", "-m", "venv", str(venv)]
+        if subprocess.run(cmd, check=False).returncode != 0:
+            return False
+    pip = ["uv", "pip", "install", "--python", str(venv / "bin" / "python")] if have_uv \
+        else [str(venv / "bin" / "pip"), "install"]
+    extra = ["--index-url", index_url] if index_url else []
+    return subprocess.run([*pip, *extra, *packages], check=False).returncode == 0
+
+
+def _gpu_backend() -> str:
+    """Which torch backend fits this machine: xpu, cuda or cpu."""
+    import ctypes.util
+    import shutil
+    intel_gpu = False
+    for vendor in Path("/sys/class/drm").glob("renderD*/device/vendor"):
+        try:
+            if vendor.read_text().strip() == "0x8086":
+                intel_gpu = True
+        except OSError:
+            pass
+    if intel_gpu and ctypes.util.find_library("ze_loader"):
+        return "xpu"
+    if shutil.which("nvidia-smi"):
+        return "cuda"
+    return "cpu"
+
+
+def install_supertonic() -> bool:
+    if not _engine_venv(SUPERTONIC_DIR, "supertonic", ["supertonic", "numpy"]):
+        return False
+    print("Downloading the Supertonic 3 model (~260 MB) …")
+    warm = subprocess.run(
+        [str(SUPERTONIC_DIR / ".venv" / "bin" / "python"), "-c",
+         "from supertonic import TTS; TTS(auto_download=True); print('model ready')"],
+        check=False)
+    if warm.returncode != 0:
+        return False
+    print("Supertonic installed. Enable it per language, e.g.: omalexia voice engine nl supertonic")
+    return True
+
+
+def install_omnivoice() -> bool:
+    backend = _gpu_backend()
+    torch_index = {
+        "xpu": "https://download.pytorch.org/whl/xpu",
+        "cuda": None,  # default PyPI wheels bundle CUDA
+        "cpu": "https://download.pytorch.org/whl/cpu",
+    }[backend]
+    if backend == "cpu":
+        gpu_hint = ""
+        for vendor in Path("/sys/class/drm").glob("renderD*/device/vendor"):
+            try:
+                if vendor.read_text().strip() == "0x8086":
+                    gpu_hint = ("\nThis machine has an Intel GPU; install "
+                                "intel-compute-runtime and level-zero-loader first "
+                                "to use it, then rerun this install.")
+            except OSError:
+                pass
+        print("WARNING: no usable GPU backend found. OmniVoice on CPU is far "
+              "too slow for reading (20-70x real time)." + gpu_hint, file=sys.stderr)
+    print(f"Installing PyTorch ({backend}) plus OmniVoice; this is a multi-GB download …")
+    if not _engine_venv(OMNIVOICE_DIR, "omnivoice", ["torch", "torchaudio"], torch_index):
+        return False
+    if not _engine_venv(OMNIVOICE_DIR, "omnivoice", ["omnivoice", "numpy"]):
+        return False
+    print("Downloading the OmniVoice model (~3 GB) …")
+    warm = subprocess.run(
+        [str(OMNIVOICE_DIR / ".venv" / "bin" / "python"), "-c",
+         "from huggingface_hub import snapshot_download; "
+         "snapshot_download('k2-fsa/OmniVoice'); print('model ready')"],
+        check=False)
+    if warm.returncode != 0:
+        return False
+    print("OmniVoice installed (weights are CC-BY-NC: personal use).")
+    print("Enable it per language, e.g.: omalexia voice engine nl omnivoice")
     return True
 
 
@@ -333,8 +441,10 @@ def main(argv: list[str]) -> int:
         for lang, voices in RECOMMENDED.items():
             for name, blurb in voices:
                 print(f"  {lang}: {name:28} {blurb}")
-        if (KOKORO_DIR / ".venv").exists():
-            print("Kokoro: installed")
+        for label, directory in (("Kokoro", KOKORO_DIR), ("Supertonic", SUPERTONIC_DIR),
+                                 ("OmniVoice", OMNIVOICE_DIR)):
+            if (directory / ".venv").exists():
+                print(f"{label}: installed")
         return 0
 
     if cmd == "languages":
@@ -357,6 +467,10 @@ def main(argv: list[str]) -> int:
             return 1
         if rest == ["kokoro"]:
             return 0 if install_kokoro() else 1
+        if rest == ["supertonic"]:
+            return 0 if install_supertonic() else 1
+        if rest == ["omnivoice"]:
+            return 0 if install_omnivoice() else 1
         return 0 if install_piper(rest) else 1
 
     if cmd == "set" and len(rest) == 2:
@@ -371,19 +485,31 @@ def main(argv: list[str]) -> int:
 
     if cmd == "engine" and len(rest) == 2:
         lang, engine = rest
-        if engine not in ("piper", "kokoro"):
-            print("engine must be piper or kokoro", file=sys.stderr)
+        if engine not in ENGINES:
+            print(f"engine must be one of: {' '.join(ENGINES)}", file=sys.stderr)
             return 1
         if engine == "kokoro" and lang not in KOKORO_LANGS:
-            print(f"kokoro speaks {' '.join(KOKORO_LANGS)}; use piper for {lang}", file=sys.stderr)
+            print(f"kokoro speaks {' '.join(KOKORO_LANGS)}; use another engine for {lang}",
+                  file=sys.stderr)
             return 1
-        if engine == "kokoro" and not (KOKORO_DIR / ".venv").exists():
-            if not install_kokoro():
+        if engine == "supertonic" and lang not in SUPERTONIC_LANGS:
+            print(f"supertonic speaks {' '.join(SUPERTONIC_LANGS)}; "
+                  f"use another engine for {lang}", file=sys.stderr)
+            return 1
+        installers = {"kokoro": (KOKORO_DIR, install_kokoro),
+                      "supertonic": (SUPERTONIC_DIR, install_supertonic),
+                      "omnivoice": (OMNIVOICE_DIR, install_omnivoice)}
+        if engine in installers:
+            directory, installer = installers[engine]
+            if not (directory / ".venv").exists() and not installer():
                 return 1
         tts["engines"][lang] = engine
         save(cfg)
         print(f"{lang} engine -> {engine}")
         return 0
+
+    if cmd == "advise":
+        return subprocess.run(["omalexia-tts-advisor", *rest], check=False).returncode
 
     if cmd == "language" and len(rest) == 1:
         tts["default_language"] = rest[0]

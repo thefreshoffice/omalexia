@@ -1,0 +1,180 @@
+#!/usr/bin/python3
+"""omalexia-tts-advisor: recommend reading engines for this machine.
+
+Probes the CPU, memory, GPUs and disk, then ranks the TTS engines omalexia
+can run so weaker machines get something that keeps up and stronger ones get
+the best quality they can afford. Calibrated against measurements on the
+reference machine (Core Ultra 7 255H, 16 threads, Arc iGPU with 128 EUs):
+
+  piper       RTF 0.2-0.4 on CPU, 253 MB     any machine
+  kokoro      RTF ~0.3 on CPU, ~1 GB         mid CPU, 8 languages
+  supertonic  RTF 0.4-0.9 on CPU, 560 MB     mid CPU, 31 languages, best CPU quality
+  omnivoice   RTF ~0.5 on the iGPU, 4.2 GB   GPU machines, 646 languages, best quality
+
+Usage: omalexia-tts-advisor [--json]
+"""
+
+from __future__ import annotations
+
+import ctypes.util
+import json
+import os
+import shutil
+import sys
+from pathlib import Path
+
+DATA_HOME = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "omalexia"
+
+GPU_VENDORS = {"0x8086": "intel", "0x10de": "nvidia", "0x1002": "amd"}
+
+
+def probe() -> dict:
+    cpu_model, flags = "", set()
+    try:
+        for line in Path("/proc/cpuinfo").read_text().splitlines():
+            if line.startswith("model name") and not cpu_model:
+                cpu_model = line.split(":", 1)[1].strip()
+            elif line.startswith("flags") and not flags:
+                flags = set(line.split(":", 1)[1].split())
+    except OSError:
+        pass
+    mem_gb = 0.0
+    try:
+        for line in Path("/proc/meminfo").read_text().splitlines():
+            if line.startswith("MemTotal"):
+                mem_gb = int(line.split()[1]) / 1024 / 1024
+                break
+    except OSError:
+        pass
+    gpus = []
+    for vendor_file in sorted(Path("/sys/class/drm").glob("renderD*/device/vendor")):
+        try:
+            vendor = GPU_VENDORS.get(vendor_file.read_text().strip(), "other")
+        except OSError:
+            continue
+        gpus.append({"node": vendor_file.parts[-3], "vendor": vendor})
+    try:
+        disk_free_gb = shutil.disk_usage(DATA_HOME if DATA_HOME.exists() else Path.home()).free / 2**30
+    except OSError:
+        disk_free_gb = 0.0
+    return {
+        "cpu": {
+            "model": cpu_model,
+            "threads": os.cpu_count() or 1,
+            "avx2": "avx2" in flags,
+            "avx512": "avx512f" in flags,
+        },
+        "mem_gb": round(mem_gb, 1),
+        "gpus": gpus,
+        "level_zero": bool(ctypes.util.find_library("ze_loader")),
+        "nvidia": shutil.which("nvidia-smi") is not None,
+        "npu": Path("/dev/accel/accel0").exists(),
+        "disk_free_gb": round(disk_free_gb, 1),
+        "installed": {
+            "piper": bool(list((DATA_HOME / "voices").glob("*.onnx"))
+                          if (DATA_HOME / "voices").exists() else []),
+            "kokoro": (DATA_HOME / "kokoro" / ".venv").exists(),
+            "supertonic": (DATA_HOME / "supertonic" / ".venv").exists(),
+            "omnivoice": (DATA_HOME / "omnivoice" / ".venv").exists(),
+        },
+    }
+
+
+def recommend(spec: dict) -> list[dict]:
+    """Ranked engine advice: what this machine should use and why."""
+    threads = spec["cpu"]["threads"]
+    mem = spec["mem_gb"]
+    disk = spec["disk_free_gb"]
+    intel_gpu = any(g["vendor"] == "intel" for g in spec["gpus"])
+    gpu_ready = (intel_gpu and spec["level_zero"]) or spec["nvidia"]
+    out: list[dict] = []
+
+    def add(engine, verdict, reason, langs, install=None):
+        out.append({"engine": engine, "verdict": verdict, "reason": reason,
+                    "languages": langs, "install": install})
+
+    # OmniVoice: best quality and coverage, but strictly a GPU engine.
+    if gpu_ready and mem >= 8 and disk >= 10:
+        add("omnivoice", "recommended",
+            "a GPU backend is available; best quality and 646 languages "
+            "(weights CC-BY-NC: personal use)", "646 (all of them)",
+            "omalexia voice install omnivoice")
+    elif intel_gpu and not spec["level_zero"]:
+        add("omnivoice", "possible after driver install",
+            "Intel GPU present but the compute stack is missing; install "
+            "intel-compute-runtime and level-zero-loader (pacman), then rerun",
+            "646 (all of them)")
+    elif gpu_ready:
+        add("omnivoice", "not advised",
+            f"GPU present but only {mem:.0f} GB RAM / {disk:.0f} GB free disk; "
+            "it needs ~8 GB RAM and a ~10 GB install", "646")
+    else:
+        add("omnivoice", "not advised", "no GPU backend; 20-70x too slow on CPU", "646")
+
+    # Supertonic: the best quality a CPU can sustain, 31 languages.
+    if threads >= 4 and mem >= 3:
+        add("supertonic", "recommended",
+            f"{threads} CPU threads keep the 99M model real time (vendor "
+            "demonstrates it on e-reader-class hardware)", "31 European + Asian",
+            "omalexia voice install supertonic")
+    elif threads >= 2 and mem >= 2:
+        add("supertonic", "worth trying",
+            "small CPU: likely still real time, but verify with "
+            "`omalexia voice test` before adopting", "31",
+            "omalexia voice install supertonic")
+    else:
+        add("supertonic", "not advised", "below 2 threads / 2 GB RAM", "31")
+
+    # Kokoro: good English-family quality on mid CPUs.
+    if threads >= 4 and mem >= 4:
+        add("kokoro", "optional",
+            "good quality for its 8 languages; superseded by supertonic for "
+            "coverage", "en es fr hi it ja pt zh", "omalexia voice install kokoro")
+
+    # Piper: the floor that always works.
+    add("piper", "always keep",
+        "instant, tiny, ~45 languages; the fallback every machine can run "
+        "(for Dutch prefer the nl_BE voices)", "~45",
+        "installed by default")
+
+    if spec["npu"]:
+        out.append({"engine": "(npu)", "verdict": "detected, unused",
+                    "reason": "no TTS decoder runs on Intel NPUs today; "
+                    "revisit in a future OpenVINO release",
+                    "languages": "", "install": None})
+    return out
+
+
+def main() -> int:
+    spec = probe()
+    advice = recommend(spec)
+    if "--json" in sys.argv:
+        print(json.dumps({"spec": spec, "advice": advice}, indent=2))
+        return 0
+    gpu_bits = ", ".join(f"{g['vendor']} ({g['node']})" for g in spec["gpus"]) or "none"
+    print(f"Machine: {spec['cpu']['model'] or 'unknown CPU'}")
+    print(f"  {spec['cpu']['threads']} threads, {spec['mem_gb']:.0f} GB RAM, "
+          f"{spec['disk_free_gb']:.0f} GB free disk")
+    print(f"  GPU: {gpu_bits}; compute stack: "
+          f"{'level-zero' if spec['level_zero'] else ''}"
+          f"{' nvidia' if spec['nvidia'] else ''}".rstrip() or "  GPU: none")
+    print()
+    print("Advice (best first):")
+    for a in advice:
+        mark = {"recommended": "->", "always keep": "->"}.get(a["verdict"], "  ")
+        installed = spec["installed"].get(a["engine"])
+        state = " [installed]" if installed else ""
+        print(f" {mark} {a['engine']:11} {a['verdict']}{state}")
+        print(f"      {a['reason']}")
+        if a.get("languages"):
+            print(f"      languages: {a['languages']}")
+        if a.get("install") and not installed and a["verdict"] in (
+                "recommended", "worth trying", "optional"):
+            print(f"      install: {a['install']}")
+    print()
+    print("Pick per language with: omalexia voice engine LANG ENGINE")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

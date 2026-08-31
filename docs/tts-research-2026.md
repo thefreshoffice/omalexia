@@ -314,18 +314,25 @@ Notes:
 The bar is >8/10 per language. Updated after the listening verdict
 and the on-machine measurements:
 
-1. Integrate Supertonic 3 behind omalexia-speakd as a selectable
-   engine for its 31 languages (Dutch first): real-time on CPU today,
-   99M params, commercial-friendly OpenRAIL-M. Mirror the Piper
-   integration shape (offline ONNX, per-language voice choice).
-   Caveat recorded: the upstream open repo is frozen (archived), so
-   pin the assets we have.
-2. OmniVoice on the Arc iGPU: DONE, and it works. RTF 0.48-0.61 at
-   16 steps, 0.86-1.04 at 32 steps (fp16, PyTorch XPU backend, 4.2 GB
-   resident). Its 646 languages are now practical in one engine on
-   this machine. Remaining checks: fp16/step16 quality by ear
-   (samples saved), stability of the XPU path under the daemon, and
-   the CC-BY-NC weights flag for any commercial future.
+1. Supertonic 3 integration: DONE (2026-08-31). Runs as a shared
+   worker subprocess behind omalexia-speakd (config/supertonic/
+   worker.py, `omalexia voice install supertonic`, `omalexia voice
+   engine LANG supertonic`), verified speaking Dutch through the
+   daemon in real time. Upstream repo is frozen (archived); assets
+   pinned locally.
+2. OmniVoice integration: DONE (2026-08-31). XPU measured RTF
+   0.48-0.61 at 16 steps, 0.86-1.04 at 32 (fp16, 4.2 GB resident);
+   integrated as a worker engine with automatic device pick
+   (xpu/cuda/cpu) and a voice-clone prompt (voice.pt) pinning one
+   consistent voice across sentences; verified speaking Dutch through
+   the daemon on the iGPU, warm utterances real time. Fallback ladder
+   in the daemon: omnivoice -> supertonic -> piper. CC-BY-NC weights
+   flag stands for any commercial future.
+2b. Machine advisor: DONE. `omalexia-tts-advisor` (also `omalexia
+   voice advise`) probes CPU/RAM/GPU/compute stack/NPU/disk and ranks
+   the engines a machine can sustain, calibrated against this
+   laptop's measurements, so weaker machines get Piper or Supertonic
+   and GPU machines get OmniVoice.
 3. Chatterbox: get the missing listening verdict (nl-1/nl-2.wav).
    Only if it wins on sound does the decoder acceleration work
    (single-step Turbo variant, then onnxruntime-openvino GPU FP16)

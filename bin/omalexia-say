@@ -40,6 +40,16 @@ GLYPH_STOP = "󰝛"
 GLYPH_WARN = "󰀦"
 
 
+# The OCR region picker. slurp's own default background is #FFFFFF40, so it
+# washes the whole screen in translucent white -- the glare this project exists
+# to avoid -- and every extra press stacks another layer until the screen is
+# solid white. Dim instead, and leave the region being dragged untinted.
+PICKER_BG = os.environ.get("OMALEXIA_PICKER_BG", "#00000066")
+PICKER_BORDER = os.environ.get("OMALEXIA_PICKER_BORDER", "#f5f5f5ff")
+PICKER_SELECTION = os.environ.get("OMALEXIA_PICKER_SELECTION", "#00000000")
+PICKER_BORDER_WEIGHT = os.environ.get("OMALEXIA_PICKER_BORDER_WEIGHT", "2")
+
+
 def notify(headline: str, body: str = "", glyph: str = GLYPH_SPEAK, urgency: str = "low"):
     if shutil.which("omarchy-notification-send"):
         cmd = ["omarchy-notification-send", "-g", glyph, "-u", urgency, "--app-name", "omalexia", headline]
@@ -128,16 +138,32 @@ def get_clipboard() -> str:
     return run_text(["wl-paste", "--no-newline"]).strip()
 
 
-def get_ocr() -> str:
-    """Freeze the screen, let the user draw a rectangle, OCR it."""
+def picker_running() -> bool:
+    return subprocess.run(["pgrep", "-x", "slurp"], capture_output=True, check=False).returncode == 0
+
+
+def get_ocr() -> str | None:
+    """Freeze the screen, let the user draw a rectangle, OCR it. Returns None if
+    the user cancelled, so the caller does not claim there was no text."""
+    if picker_running():
+        # A second press is a change of mind, not a second overlay. The process
+        # that owns the picker sees an empty region and lifts its own freeze.
+        subprocess.run(["pkill", "-x", "slurp"], check=False)
+        return None
     freeze = None
     if shutil.which("hyprpicker"):
         freeze = subprocess.Popen(["hyprpicker", "-r", "-z"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         time.sleep(0.1)
     try:
-        region = run_text(["slurp"], timeout=120).strip()
+        region = run_text([
+            "slurp",
+            "-b", PICKER_BG,
+            "-c", PICKER_BORDER,
+            "-s", PICKER_SELECTION,
+            "-w", PICKER_BORDER_WEIGHT,
+        ], timeout=120).strip()
         if not region:
-            return ""
+            return None
         grim = subprocess.run(["grim", "-g", region, "-"], capture_output=True, check=False)
     finally:
         if freeze is not None:
@@ -303,6 +329,8 @@ def main(argv: list[str]) -> int:
         return speak(get_clipboard(), lang, wait, quiet, speed)
     if cmd == "ocr":
         text = get_ocr()
+        if text is None:
+            return 0
         if not text:
             notify("No text found", "Nothing readable in that region.", GLYPH_WARN)
             return 1

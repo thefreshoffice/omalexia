@@ -330,14 +330,12 @@ def _tty_size(pid):
 
 
 # A terminal cell is taller than its glyphs: it carries the line's leading,
-# split above and below the letters, with the baseline low in the cell. A
-# highlight that fills the whole cell therefore floats above and around the
-# text, worse the smaller the font (the leading is a larger share). These
-# fractions carve the glyph band out of the cell: skip the top leading and
-# a little of the descender space, keeping the box on the letters. They
-# scale with cell_h, so the highlight tracks the text size automatically.
-GLYPH_TOP = 0.18    # share of the cell trimmed off the top (leading + gap)
-GLYPH_BOTTOM = 0.10  # share trimmed off the bottom (descender slack)
+# split above and below the letters. A highlight that fills the whole cell
+# floats around the text, worse the smaller the font. This fraction is
+# trimmed off the top and the bottom equally, so the box is a shorter band
+# centred vertically in the cell, sitting square on the line of text. It
+# scales with cell_h, so the highlight tracks the text size automatically.
+GLYPH_TRIM = 0.14   # share of the cell trimmed off the top AND the bottom
 
 
 def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
@@ -348,8 +346,8 @@ def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
     cell_h = (window["h"] * scale - 2 * pad_y) / rows
     if cell_w <= 2 or cell_h <= 4:
         return None
-    glyph_top = cell_h * GLYPH_TOP
-    glyph_h = cell_h * (1.0 - GLYPH_TOP - GLYPH_BOTTOM)
+    glyph_top = cell_h * GLYPH_TRIM
+    glyph_h = cell_h * (1.0 - 2 * GLYPH_TRIM)
     return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
             "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h,
             "glyph_top": glyph_top, "glyph_h": glyph_h}

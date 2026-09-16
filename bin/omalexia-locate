@@ -114,6 +114,32 @@ def _window_dict(win, monitors):
             "title": win.get("title")}
 
 
+def ensure_session_env() -> None:
+    """The daemon that spawns us is a systemd user service; started on a
+    clean boot it can come up before Hyprland exports its session variables
+    and then hands that empty environment down, which breaks hyprctl (no
+    focused window), grim (no screenshots) and wtype. Derive what is missing
+    from the runtime directory, the same way omarchy-restart-shell does."""
+    runtime = Path(os.environ.get("XDG_RUNTIME_DIR", f"/run/user/{os.getuid()}"))
+    if not os.environ.get("HYPRLAND_INSTANCE_SIGNATURE"):
+        try:
+            dirs = sorted((d for d in (runtime / "hypr").iterdir() if d.is_dir()),
+                          key=lambda d: d.stat().st_mtime)
+        except OSError:
+            dirs = []
+        if dirs:
+            os.environ["HYPRLAND_INSTANCE_SIGNATURE"] = dirs[-1].name
+    if not os.environ.get("WAYLAND_DISPLAY"):
+        try:
+            socks = sorted((s for s in runtime.glob("wayland-*")
+                            if not s.name.endswith(".lock")),
+                           key=lambda p: p.stat().st_mtime)
+        except OSError:
+            socks = []
+        if socks:
+            os.environ["WAYLAND_DISPLAY"] = socks[-1].name
+
+
 def focused_window():
     try:
         win = json.loads(run(["hyprctl", "activewindow", "-j"], timeout=5).stdout or "{}")
@@ -1399,6 +1425,7 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
 
 
 def main() -> int:
+    ensure_session_env()
     args = sys.argv[1:]
     image = origin = sel_override = None
     scale = 1.0

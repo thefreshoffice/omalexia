@@ -15,4 +15,7 @@ Nice=5
 Environment=OMP_NUM_THREADS=4
 
 [Install]
-WantedBy=default.target
+# graphical-session.target, not default.target: the daemon must start after
+# Hyprland has exported its session environment, or every helper it spawns
+# (hyprctl, grim, wtype) is blind and read-along highlighting dies.
+WantedBy=graphical-session.target

@@ -435,7 +435,10 @@ def set_value(key: str, value: str) -> None:
         VOXTYPE_CONFIG.write_text(text.rstrip("\n") + "\n")
         run(["systemctl", "--user", "restart", "voxtype.service"], timeout=15)
     elif key == "font":
-        run([tool("omalexia-font"), "reset" if value == "default" else value], timeout=60)
+        # Detached: the switch restarts the shell, and this process is the
+        # shell's own child. Running it synchronously let the restart kill
+        # the switch halfway through.
+        detached([tool("omalexia-font"), "reset" if value == "default" else value])
     elif key == "textSize":
         run(["omarchy-display-text-size", str(int(value))], timeout=20)
     elif key == "tint":

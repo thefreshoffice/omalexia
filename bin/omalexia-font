@@ -130,11 +130,16 @@ with open(path, "w", encoding="utf-8") as f:
 PY
 }
 
+# omarchy-font-set restarts the Omarchy shell itself. Returns 0 when it ran,
+# so the caller knows a restart already happened: issuing a second restart on
+# top of it killed the fresh shell mid-startup and segfaulted quickshell.
 set_mono() {
   local mono="$1"
   if font_present "$mono"; then
     omarchy-font-set "$mono" >/dev/null 2>&1 || true
+    return 0
   fi
+  return 1
 }
 
 # The fonts are all SIL OFL licensed, so Omalexia installs them itself,
@@ -205,9 +210,10 @@ apply() {
   set_chromium "$family"
   printf '%s\n' "$family" >"$STATE_DIR/font"
   printf '%s\n' "$key" >"$STATE_DIR/font-choice"
-  set_mono "${MONO[$key]}"
+  local mono_restarted=1
+  if ! set_mono "${MONO[$key]}"; then mono_restarted=0; fi
   hyprctl reload >/dev/null 2>&1 || true
-  omarchy-restart-shell >/dev/null 2>&1 || true
+  if (( ! mono_restarted )); then omarchy-restart-shell >/dev/null 2>&1 || true; fi
   notify "Reading font: $family" "Open apps pick it up on restart."
   echo "$family"
 }
@@ -217,9 +223,10 @@ reset() {
   fc-cache -f >/dev/null 2>&1 || true
   reset_gtk
   set_chromium RESET
-  set_mono "$DEFAULT_MONO"
+  local mono_restarted=1
+  if ! set_mono "$DEFAULT_MONO"; then mono_restarted=0; fi
   hyprctl reload >/dev/null 2>&1 || true
-  omarchy-restart-shell >/dev/null 2>&1 || true
+  if (( ! mono_restarted )); then omarchy-restart-shell >/dev/null 2>&1 || true; fi
   notify "Fonts back to Omarchy defaults"
 }
 

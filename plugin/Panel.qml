@@ -48,16 +48,21 @@ Panel {
     if (!omalexia.installed) return keys.concat(["install"])
     keys.push("read.actions")
     if (omalexia.speaking) keys.push("read.stop")
+    if (showDictation && dictationInstalled) keys.push("talk.actions")
     keys.push("read.speed")
     var voiceLangs = read.languages || []
     for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
     keys.push("read.language", "read.highlight")
     if (String(read.highlightMode || "text") !== "off") keys.push("read.timing")
     if (showDictation) {
-      if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback")
+      if (dictationInstalled) keys.push("dict.engine", "dict.feedback", "dict.tools")
       else keys.push("dict.install")
     }
-    if (showLook) keys.push("look.layout", "look.comfort", "look.font", "look.size")
+    if (showLook) {
+      keys.push("look.layout", "look.comfort")
+      if (look.fontsMissing === true) keys.push("look.fontsInstall")
+      keys.push("look.font", "look.size")
+    }
     keys.push("footer")
     return keys
   }
@@ -68,7 +73,7 @@ Panel {
 
   function actionCount(key) {
     if (key === "read.actions") return 4
-    if (key === "dict.actions") return 4
+    if (key === "talk.actions" || key === "dict.tools") return 2
     if (key === "look.layout" || key === "look.comfort") return 2
     if (key === "footer") return 3
     return 1
@@ -157,12 +162,15 @@ Panel {
     case "read.stop": omalexia.stopReading(); break
     case "read.language": languageDropdown.toggle(); break
     case "read.highlight": highlightDropdown.toggle(); break
-    case "dict.actions":
+    case "talk.actions":
       if (actionIndex === 0) omalexia.toggleDictation()
-      else if (actionIndex === 1) omalexia.cancelDictation()
-      else if (actionIndex === 2) omalexia.act("word-list")
+      else omalexia.cancelDictation()
+      break
+    case "dict.tools":
+      if (actionIndex === 0) omalexia.act("word-list")
       else omalexia.act("dictation-restart")
       break
+    case "look.fontsInstall": omalexia.act("font-install"); break
     case "dict.install": omalexia.act("dictation-install"); break
     case "dict.engine": engineDropdown.toggle(); break
     case "dict.feedback": feedbackDropdown.toggle(); break
@@ -478,10 +486,8 @@ Panel {
             width: parent.width
             spacing: Style.space(10)
 
-            PanelSectionHeader { text: "READ ALOUD"; foreground: root.foreground; fontFamily: root.fontFamily }
-
-            // Four sources fit the row; five clipped. Stop gets a row of its
-            // own below, present only while something is actually playing.
+            // Everything you *do* sits together at the top: read from four
+            // sources, stop, dictate. The settings sections follow below.
             ActionRow {
               rowKey: "read.actions"
               uniform: true
@@ -506,6 +512,24 @@ Panel {
               buttons: [{ icon: "󰝛", text: "Stop reading", tip: "Stop (or press F10)" }]
               onTriggered: function(index) { omalexia.stopReading() }
             }
+
+            ActionRow {
+              visible: root.showDictation && root.dictationInstalled
+              rowKey: "talk.actions"
+              uniform: true
+              buttons: [
+                { icon: omalexia.recording ? "󰓛" : "󰑊", text: omalexia.recording ? "Stop dictating" : "Dictate", tip: "Start or stop dictation (Super+Ctrl+X, or hold F9)" },
+                { icon: "󰜺", text: "Cancel", tip: "Discard the current recording (Shift+F9)", enabled: omalexia.recording || omalexia.transcribing }
+              ]
+              onTriggered: function(index) {
+                if (index === 0) omalexia.toggleDictation()
+                else omalexia.cancelDictation()
+              }
+            }
+
+            PanelSeparator { foreground: root.foreground }
+
+            PanelSectionHeader { text: "READ ALOUD"; foreground: root.foreground; fontFamily: root.fontFamily }
 
             SliderRow {
               rowKey: "read.speed"
@@ -607,24 +631,6 @@ Panel {
               onTriggered: function(index) { omalexia.act("dictation-install") }
             }
 
-            ActionRow {
-              visible: root.dictationInstalled
-              rowKey: "dict.actions"
-              uniform: true
-              buttons: [
-                { icon: omalexia.recording ? "󰓛" : "󰑊", text: omalexia.recording ? "Stop" : "Dictate", tip: "Start or stop dictation (Super+Ctrl+X, or hold F9)" },
-                { icon: "󰜺", text: "Cancel", tip: "Discard the current recording (Shift+F9)", enabled: omalexia.recording || omalexia.transcribing },
-                { icon: "󰬴", text: "Word list", tip: "Personal replacements: spoken = written" },
-                { icon: "󰜉", text: "Restart", tip: "Restart voxtype" }
-              ]
-              onTriggered: function(index) {
-                if (index === 0) omalexia.toggleDictation()
-                else if (index === 1) omalexia.cancelDictation()
-                else if (index === 2) omalexia.act("word-list")
-                else omalexia.act("dictation-restart")
-              }
-            }
-
             DropdownRow {
               id: engineDropdown
               visible: root.dictationInstalled
@@ -653,6 +659,20 @@ Panel {
               options: root.feedbackOptions
               current: root.feedbackValue
               onChosen: function(v) { root.chooseFeedback(v) }
+            }
+
+            ActionRow {
+              visible: root.dictationInstalled
+              rowKey: "dict.tools"
+              uniform: true
+              buttons: [
+                { icon: "󰬴", text: "Word list", tip: "Personal replacements: spoken = written" },
+                { icon: "󰜉", text: "Restart voxtype", tip: "Restart the dictation service" }
+              ]
+              onTriggered: function(index) {
+                if (index === 0) omalexia.act("word-list")
+                else omalexia.act("dictation-restart")
+              }
             }
           }
 
@@ -692,6 +712,14 @@ Panel {
                 if (index === 0) omalexia.set("tint", next ? "true" : "false")
                 else omalexia.set("reducedMotion", next ? "true" : "false")
               }
+            }
+
+            ActionRow {
+              visible: root.look.fontsMissing === true
+              rowKey: "look.fontsInstall"
+              uniform: true
+              buttons: [{ icon: "󰉉", text: "Install the reading fonts", tip: "Downloads Atkinson Hyperlegible, OpenDyslexic and Inter into your user fonts; no sudo needed" }]
+              onTriggered: function(index) { omalexia.act("font-install") }
             }
 
             DropdownRow {

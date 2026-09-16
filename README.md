@@ -192,8 +192,9 @@ a local LLM pass later.
   Hyprland's own text, the terminal font (a Nerd-Font-patched companion, so
   icons keep working) and Chromium's page fonts plus a 14 px minimum in one
   go. The default is **Atkinson Hyperlegible** (Braille Institute; distinct
-  letterforms, official Arch package). OpenDyslexic is one command away, but
-  read the research note below before assuming it helps.
+  letterforms). The fonts ship with Omalexia: `omalexia font install` puts
+  them in your user font directory, no sudo. OpenDyslexic is one command
+  away, but read the research note below before assuming it helps.
 - **Text size**: the installer sets `omarchy display text size 14` once
   (shell, GTK apps and terminals together); the menu offers 12–18.
 - **Reading mode** (`Super + R`): floats the focused window at
@@ -274,11 +275,15 @@ mode markers), voices in `~/.local/share/omalexia/voices/`, the socket in
 
 ## Packages
 
-Official repos: `ttf-atkinson-hyperlegible`, `otf-atkinsonhyperlegiblemono-nerd`,
-`otf-opendyslexic-nerd`, `inter-font`, `hunspell-en_us`, `hunspell-nl`,
-`tesseract-data-nld`, `speech-dispatcher`, `wl-clipboard`, `wtype`, `grim`,
-`slurp`, `tesseract`, `jq`. AUR: `piper-tts` (builds a wheel on
-`python-onnxruntime`) and `voxtype-bin`.
+Official repos: `hunspell-en_us`, `hunspell-nl`, `tesseract-data-nld`,
+`speech-dispatcher`, `wl-clipboard`, `wtype`, `grim`, `slurp`, `tesseract`,
+`jq`. AUR: `piper-tts` (builds a wheel on `python-onnxruntime`) and
+`voxtype-bin`.
+
+The reading fonts are not packages: they are all SIL OFL licensed, so
+`omalexia font install` (run by the installer, no sudo) downloads Atkinson
+Hyperlegible, OpenDyslexic, Inter and their Nerd-patched terminal companions
+straight into `~/.local/share/fonts/omalexia/`.
 
 ## Known limits
 

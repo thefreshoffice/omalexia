@@ -72,6 +72,20 @@ FONTS = [
     ("inter", "Inter"),
     ("default", "Omarchy default"),
 ]
+FONT_FAMILIES = {
+    "atkinson": "atkinson hyperlegible",
+    "opendyslexic": "opendyslexic",
+    "inter": "inter",
+}
+
+
+def installed_font_families() -> set:
+    r = run(["fc-list", ":", "family"], timeout=5)
+    families = set()
+    for line in (r.stdout.splitlines() if r else []):
+        for name in line.split(","):
+            families.add(name.strip().lower())
+    return families
 
 
 def run(cmd, timeout=6, **kw):
@@ -319,10 +333,15 @@ def text_size() -> int:
 
 def look_status() -> dict:
     font_choice = read_text(OMALEXIA_STATE / "font-choice") or "default"
+    families = installed_font_families()
+    absent = [v for v, fam in FONT_FAMILIES.items() if fam not in families]
     return {
         "font": font_choice,
         "fontLabel": dict(FONTS).get(font_choice, font_choice),
-        "fonts": [{"value": v, "label": l} for v, l in FONTS],
+        "fonts": [{"value": v,
+                   "label": l + (" (not installed)" if v in absent else "")}
+                  for v, l in FONTS],
+        "fontsMissing": bool(absent),
         "textSize": text_size(),
         "tint": (OMALEXIA_STATE / "tint").exists(),
         "reducedMotion": (OMALEXIA_STATE / "reduced-motion").exists(),
@@ -449,6 +468,9 @@ def do_action(action: str, arg: str = "") -> None:
         detached(["omarchy-launch-floating-terminal-with-presentation", "omarchy-voxtype-install"])
     elif action == "word-list":
         detached(["omarchy-launch-config-editor", str(CONFIG_HOME / "omalexia" / "replacements.txt")])
+    elif action == "font-install":
+        detached(["omarchy-launch-floating-terminal-with-presentation",
+                  f"{tool('omalexia-font')} install; echo; read -r -p 'Press Enter to close.'"])
     elif action == "reading-mode":
         detached([tool("omalexia-focus"), "toggle"])
     elif action == "keys":

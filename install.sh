@@ -43,12 +43,9 @@ say "Omalexia: packages"
 if $skip_pkgs; then
   note "skipping packages (--no-pkgs)"
 else
-  # Fonts: Atkinson Hyperlegible (default reading font), OpenDyslexic and
-  # Inter as alternatives, plus Nerd-Font-patched monospace companions so
-  # terminal icons keep working. Spell checking and Dutch OCR for the rest.
+  # Spell checking, Dutch OCR and the speech plumbing. The reading fonts are
+  # not here: they are SIL OFL licensed and install user-level below, no sudo.
   omarchy-pkg-add \
-    ttf-atkinson-hyperlegible otf-atkinsonhyperlegiblemono-nerd \
-    otf-opendyslexic-nerd inter-font \
     hunspell-en_us hunspell-nl tesseract-data-nld \
     speech-dispatcher wl-clipboard wtype grim slurp tesseract jq
 
@@ -293,8 +290,13 @@ fi
 say "Omalexia: reading font and text size"
 # ---------------------------------------------------------------------------
 
+# Part of the package: the reading fonts (all SIL OFL) download into
+# ~/.local/share/fonts, so this needs no sudo and also runs with --no-pkgs.
+"$BIN_DIR/omalexia-font" install \
+  || note "font download failed; retry later with: omalexia font install"
+
 if [[ ! -f $FIRST_RUN_MARKER ]]; then
-  if fc-list : family | grep -qi 'Atkinson Hyperlegible'; then
+  if grep -qi 'Atkinson Hyperlegible' <<<"$(fc-list : family)"; then
     "$BIN_DIR/omalexia-font" atkinson >/dev/null && note "reading font: Atkinson Hyperlegible"
   else
     note "Atkinson Hyperlegible not installed yet; run: omalexia font atkinson"

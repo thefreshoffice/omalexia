@@ -6,6 +6,8 @@
 #   omalexia-font opendyslexic  OpenDyslexic (weighted bottoms; some readers
 #                               love it, studies show no measurable gain)
 #   omalexia-font inter         Inter (plain, roomy sans; closest to Verdana)
+#   omalexia-font install       download the reading fonts into the user's own
+#                               font directory (all SIL OFL licensed, no sudo)
 #   omalexia-font reset         back to Omarchy's defaults
 #   omalexia-font               show the current choice
 #
@@ -29,9 +31,10 @@ declare -A SANS=(
   [opendyslexic]="OpenDyslexic"
   [inter]="Inter"
 )
-# Nerd-Font-patched monospace companions (all in the official repos).
+# Nerd-Font-patched monospace companions. Nerd Fonts renames Atkinson
+# Hyperlegible Mono to "Atkynson Mono" (trademark), hence the y.
 declare -A MONO=(
-  [atkinson]="AtkinsonHyperlegibleMono Nerd Font"
+  [atkinson]="AtkynsonMono Nerd Font"
   [opendyslexic]="OpenDyslexicM Nerd Font"
   [inter]="JetBrainsMono Nerd Font"
 )
@@ -49,7 +52,11 @@ current_pt() {
 }
 
 font_present() {
-  fc-list : family | grep -Fqi -- "$1"
+  # No pipe into grep -q: its early exit would SIGPIPE fc-list, and under
+  # pipefail that made this check fail exactly when the font was present.
+  local families
+  families="$(fc-list : family || true)"
+  grep -Fqi -- "$1" <<<"$families"
 }
 
 set_fontconfig() {
@@ -130,6 +137,61 @@ set_mono() {
   fi
 }
 
+# The fonts are all SIL OFL licensed, so Omalexia installs them itself,
+# user-level, no sudo: the three reading faces plus the Nerd-patched
+# monospace companions the terminal switch needs.
+FONTS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/fonts/omalexia"
+NERD_TAG="v3.5.1"
+INTER_VERSION="4.1"
+
+fetch() { curl -fsSL --retry 2 --connect-timeout 15 -o "$1" "$2"; }
+
+install_fonts() {
+  if font_present "Atkinson Hyperlegible" && font_present "OpenDyslexic" \
+     && font_present "Inter" && font_present "AtkynsonMono Nerd Font" \
+     && font_present "OpenDyslexicM Nerd Font"; then
+    echo "All reading fonts are already installed."
+    return 0
+  fi
+  local tmp style
+  tmp="$(mktemp -d)"
+  mkdir -p "$FONTS_DIR"
+
+  echo "Atkinson Hyperlegible (Braille Institute, OFL) ..."
+  local gf="https://github.com/google/fonts/raw/main/ofl/atkinsonhyperlegible"
+  for style in Regular Bold Italic BoldItalic; do
+    fetch "$FONTS_DIR/AtkinsonHyperlegible-$style.ttf" "$gf/AtkinsonHyperlegible-$style.ttf"
+  done
+
+  echo "OpenDyslexic (OFL) ..."
+  local od="https://github.com/antijingoist/opendyslexic/raw/main/compiled"
+  for style in Regular Bold Italic BoldItalic; do
+    fetch "$FONTS_DIR/OpenDyslexic-$style.otf" "$od/OpenDyslexic-$style.otf"
+  done
+
+  echo "Inter (OFL) ..."
+  fetch "$tmp/inter.zip" "https://github.com/rsms/inter/releases/download/v$INTER_VERSION/Inter-$INTER_VERSION.zip"
+  # The v4 variable file names its family "Inter Variable"; the static
+  # weights are the ones actually called "Inter".
+  unzip -o -q -j "$tmp/inter.zip" \
+    "extras/otf/Inter-Regular.otf" "extras/otf/Inter-Bold.otf" \
+    "extras/otf/Inter-Italic.otf" "extras/otf/Inter-BoldItalic.otf" -d "$FONTS_DIR"
+  rm -f "$FONTS_DIR"/InterVariable*.ttf
+
+  echo "Terminal companions (Nerd Fonts $NERD_TAG) ..."
+  local nf="https://github.com/ryanoasis/nerd-fonts/releases/download/$NERD_TAG"
+  fetch "$tmp/atkmono.zip" "$nf/AtkinsonHyperlegibleMono.zip"
+  unzip -o -q -j "$tmp/atkmono.zip" "AtkynsonMonoNerdFont-*" -d "$FONTS_DIR"
+  fetch "$tmp/odnerd.zip" "$nf/OpenDyslexic.zip"
+  unzip -o -q -j "$tmp/odnerd.zip" "OpenDyslexicMNerdFont-*" -d "$FONTS_DIR"
+
+  rm -rf "$tmp"
+  fc-cache -f >/dev/null 2>&1 || true
+  echo
+  echo "Installed into $FONTS_DIR."
+  notify "Reading fonts installed" "Atkinson Hyperlegible, OpenDyslexic and Inter are ready to choose."
+}
+
 apply() {
   local key="$1" family="${SANS[$1]}"
   if ! font_present "$family"; then
@@ -166,9 +228,10 @@ case "$choice" in
     if [[ -f $STATE_DIR/font ]]; then cat "$STATE_DIR/font"; else echo "default"; fi
     ;;
   atkinson | opendyslexic | inter) apply "$choice" ;;
+  install) install_fonts ;;
   reset | default) reset ;;
   *)
-    echo "Usage: omalexia-font [atkinson|opendyslexic|inter|reset]" >&2
+    echo "Usage: omalexia-font [atkinson|opendyslexic|inter|install|reset]" >&2
     exit 1
     ;;
 esac

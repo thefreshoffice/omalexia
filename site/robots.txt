@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://omalexia.org/sitemap.xml

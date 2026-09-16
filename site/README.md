@@ -6,6 +6,12 @@ beta), `research.html` (the speech research and the numbers), and
 Google Fonts (Atkinson Hyperlegible Next, JetBrains Mono); everything else is
 inline. Copy the folder anywhere that serves static files.
 
+SEO lives in each page's `<head>` (canonical URL, Open Graph and Twitter
+card tags, JSON-LD, favicon) plus `robots.txt`, `sitemap.xml` and the share
+image `og.png` (1200x630, rebuilt from the og-card design when the tagline
+changes). When adding a page: give it a canonical link and OG tags, and add
+it to `sitemap.xml`.
+
 The pages practise what they preach: a plain, distinct typeface at 19 px with
 1.6 line height and a ~62-character measure, a paper (off-white) theme and a
 night theme, a Calm mode (lower contrast, more space, no motion), text size
@@ -31,6 +37,15 @@ www.omalexia.org.  CNAME   thefreshoffice.github.io.
 Once the records propagate, tick "Enforce HTTPS" in Settings → Pages; GitHub
 issues the certificate automatically. Without the domain, the site is at
 https://thefreshoffice.github.io/omalexia/.
+
+### omalexia.com
+
+One GitHub Pages site carries one custom domain, so omalexia.com is served
+by a second, tiny repository, `thefreshoffice/omalexia.com`: a single page
+that redirects (path-preserving) to https://omalexia.org/ and tells search
+engines not to index it. Its DNS at TransIP is the same shape as the .org:
+four GitHub Pages A records on the apex and a `www` CNAME to
+`thefreshoffice.github.io.`.
 
 ### Alternatives
 

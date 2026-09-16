@@ -703,9 +703,10 @@ class Player:
         )
         # The default 64 KB pipe holds well under a second of audio, less
         # than one sentence takes to synthesize, which turns every sentence
-        # boundary into an audible stall. Grow it; _run paces the lead.
+        # boundary into an audible stall. Grow it; _run paces the lead. A
+        # megabyte holds the whole head start a slow engine banks up front.
         try:
-            fcntl.fcntl(self.proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, 512 * 1024)
+            fcntl.fcntl(self.proc.stdin.fileno(), fcntl.F_SETPIPE_SZ, 1024 * 1024)
         except OSError:
             pass
 
@@ -1022,6 +1023,7 @@ class Daemon:
     def _run(self, engine, text: str, speed: float | None, cancel: threading.Event, uid: int):
         player = None
         emitter = None
+        producer = None
         emitter_stop = threading.Event()
         events: queue.Queue = queue.Queue()
         clock = {"start": None}  # monotonic time of the first byte written
@@ -1038,16 +1040,18 @@ class Daemon:
             lead_max = 4.0  # buffer this far ahead; also the ceiling on how
                             # long a mid-text speed change can take to apply
             pending: list[bytes] = []
-            prebuffer = 1.5  # seconds in hand before the first byte plays: a
-                             # short first sentence no longer runs dry while
-                             # the second one is still synthesizing
+            prebuffer = 1.5   # seconds in hand before the first byte plays: a
+                              # short first sentence no longer runs dry while
+                              # the second one is still synthesizing
+            hold_max = 16.0   # ceiling on the head start a slow engine banks
+            hold = {"target": prebuffer}  # raised when the engine cannot keep up
 
-            def write_paced(pcm: bytes, hold: bool = False) -> bool:
+            def write_paced(pcm: bytes, hold_back: bool = False) -> bool:
                 nonlocal queued, pending
                 if clock["start"] is None:
                     pending.append(pcm)
                     queued += len(pcm) / 2 / engine.rate
-                    if hold and queued < prebuffer:
+                    if hold_back and queued < hold["target"]:
                         return True
                     data = b"".join(pending)
                     pending = []
@@ -1105,14 +1109,72 @@ class Daemon:
             self.emit({"event": "start", "id": uid, "lang": lang, "chars": len(text)})
 
             sentences = split_sentences(text)
-            pos = 0
-            for index, (sentence, new_paragraph) in enumerate(sentences):
-                if cancel.is_set():
+
+            # The engine runs in its own thread and synthesizes continuously
+            # ahead into a bounded queue, so it never sits idle while the
+            # writer paces playback. Sentences are synthesized at the speed
+            # in force when their turn comes and stretched to the *current*
+            # speed at write time, so a mid-text speed change still applies
+            # to everything not yet written.
+            ready: queue.Queue = queue.Queue(maxsize=4)
+
+            def produce():
+                pos = 0
+                for index, (sentence, new_paragraph) in enumerate(sentences):
+                    if cancel.is_set():
+                        break
+                    offset = text.find(sentence, pos)
+                    if offset < 0:
+                        offset = pos
+                    pos = offset + len(sentence)
+                    want = speed if speed is not None else float(self.config["tts"]["speed"])
+                    engine_speed = min(want, ENGINE_SPEED_MAX)
+                    # One sentence, one buffer. The engines deliver a sentence
+                    # as a single chunk anyway, and knowing the exact duration
+                    # before the first byte is written is what keeps the word
+                    # highlight honest.
+                    t0 = time.monotonic()
+                    pcm = b"".join(engine.synthesize(sentence, engine_speed, cancel))
+                    wall = time.monotonic() - t0
+                    if cancel.is_set():
+                        break
+                    item = (index, sentence, offset, new_paragraph, pcm,
+                            engine_speed, wall)
+                    while not cancel.is_set():
+                        try:
+                            ready.put(item, timeout=0.2)
+                            break
+                        except queue.Full:
+                            continue
+                while True:
+                    try:
+                        ready.put(None, timeout=0.2)
+                        return
+                    except queue.Full:
+                        if cancel.is_set():
+                            return
+
+            producer = threading.Thread(target=produce, daemon=True)
+            producer.start()
+
+            # Adaptive head start: pauses between sentences come from an
+            # engine that produces audio more slowly than playback consumes
+            # it. When the first sentences reveal such a deficit, raise the
+            # pre-buffer so the whole remainder plays through seamlessly:
+            # all waiting happens once, before the voice starts, never
+            # between sentences.
+            synth_wall = 0.0   # engine wall time spent so far
+            audio_wall = 0.0   # playback seconds produced so far
+            chars_done = 0
+            total_chars = max(1, sum(len(s) for s, _ in sentences))
+
+            while not cancel.is_set():
+                item = ready.get()
+                if item is None:
                     break
-                offset = text.find(sentence, pos)
-                if offset < 0:
-                    offset = pos
-                pos = offset + len(sentence)
+                index, sentence, offset, new_paragraph, pcm, synth_speed, wall = item
+                if not pcm:
+                    continue
                 now = speed if speed is not None else float(self.config["tts"]["speed"])
                 if last_speed is not None and now != last_speed:
                     log(f"speed {last_speed} -> {now} mid-utterance")
@@ -1122,27 +1184,31 @@ class Daemon:
                     pause_ms = gap_ms + (PARAGRAPH_GAP_MS if new_paragraph else 0)
                     if pause_ms:
                         pause = b"\x00\x00" * int(engine.rate * pause_ms / 1000 / now)
-                        if not write_paced(pause, hold=True):
+                        if not write_paced(pause, hold_back=True):
                             cancel.set()
                             break
                 last_speed = now
-                engine_speed = min(now, ENGINE_SPEED_MAX)
-                stretch = now / engine_speed
-                # One sentence, one buffer. Both engines deliver a sentence
-                # as a single chunk anyway, and knowing the exact duration
-                # before the first byte is written is what keeps the word
-                # highlight honest.
-                pcm = b"".join(engine.synthesize(sentence, engine_speed, cancel))
-                if cancel.is_set():
-                    break
-                if not pcm:
-                    continue
+                stretch = now / synth_speed
                 if stretch > 1.01:
                     pcm = atempo(pcm, engine.rate, stretch)
+                seconds = len(pcm) / 2 / engine.rate
+                synth_wall += wall
+                audio_wall += seconds
+                chars_done += len(sentence)
+                if clock["start"] is None and audio_wall > 0:
+                    # The engine needs (rtf - 1) extra seconds of head start
+                    # for every second of audio still to come; 0.9 leaves a
+                    # cushion for variance, chars estimate the remainder.
+                    rtf = synth_wall / audio_wall
+                    if rtf > 0.9:
+                        remaining = audio_wall * (total_chars / max(1, chars_done) - 1.0)
+                        hold["target"] = min(
+                            hold_max,
+                            max(hold["target"], (rtf - 0.9) * remaining + prebuffer))
                 if self.watchers:
                     schedule_words(events, uid, sentence, offset, index,
                                    len(sentences), queued, pcm, engine.rate, lang)
-                if not write_paced(pcm, hold=True):
+                if not write_paced(pcm, hold_back=True):
                     cancel.set()
                     break
             # A very short utterance may never have crossed the pre-buffer
@@ -1173,6 +1239,11 @@ class Daemon:
         finally:
             if player is not None:
                 player.kill()
+            if producer is not None:
+                # A cancelled producer exits through its put loop; a finished
+                # one is already gone. Keep the next utterance from starting
+                # while this one's engine call is still draining.
+                producer.join(timeout=2)
             events.put(None)
             if emitter is not None:
                 # A finished utterance has already played every scheduled

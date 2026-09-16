@@ -54,6 +54,13 @@ PanelWindow {
   // grayscale themes get a classic highlighter yellow instead.
   readonly property color markerBase: Color.accent.hslSaturation > 0.35 ? Color.accent : "#f2c744"
 
+  // The pill sits a touch proud of the letters. That margin and the corner
+  // radius scale with the box height, so a small font gets a small, snug
+  // pill instead of the same fat fixed border swallowing the text.
+  function padY(h) { return Math.max(1, Math.round(h * 0.12)); }
+  function padX(h) { return Math.max(2, Math.round(h * 0.18)); }
+  function pill(h) { return Math.max(2, Math.round(h * 0.22)); }
+
   // ---- mode "text": sentence wash + marker over the word ---------------
 
   // The whole sentence being read gets a steady wash; with the word pill
@@ -66,11 +73,11 @@ PanelWindow {
            ? root.service.highlightSentenceRects : []
     Rectangle {
       required property var modelData
-      x: modelData.x0 - root.screenX - 3
-      y: modelData.y - root.screenY - 2
-      width: modelData.x1 - modelData.x0 + 6
-      height: modelData.h + 4
-      radius: Style.space(4)
+      x: modelData.x0 - root.screenX - root.padX(modelData.h)
+      y: modelData.y - root.screenY - root.padY(modelData.h)
+      width: modelData.x1 - modelData.x0 + 2 * root.padX(modelData.h)
+      height: modelData.h + 2 * root.padY(modelData.h)
+      radius: root.pill(modelData.h)
       color: Qt.alpha(root.markerBase, root.style === "sentence" ? 0.26 : 0.12)
       border.width: root.style === "sentence" ? 1 : 0
       border.color: Qt.alpha(root.markerBase, 0.5)
@@ -86,11 +93,11 @@ PanelWindow {
     id: marker
     visible: root.mode === "text" && root.style !== "sentence" && root.lastBox !== null
     opacity: root.showMarker ? 1.0 : 0.0
-    x: root.lastBox ? root.lastBox.x - root.screenX - 3 : 0
-    y: root.lastBox ? root.lastBox.y - root.screenY - 2 : 0
-    width: root.lastBox ? root.lastBox.w + 6 : 0
-    height: root.lastBox ? root.lastBox.h + 4 : 0
-    radius: Style.space(4)
+    x: root.lastBox ? root.lastBox.x - root.screenX - root.padX(root.lastBox.h) : 0
+    y: root.lastBox ? root.lastBox.y - root.screenY - root.padY(root.lastBox.h) : 0
+    width: root.lastBox ? root.lastBox.w + 2 * root.padX(root.lastBox.h) : 0
+    height: root.lastBox ? root.lastBox.h + 2 * root.padY(root.lastBox.h) : 0
+    radius: root.lastBox ? root.pill(root.lastBox.h) : 0
     color: Qt.alpha(root.markerBase, 0.32)
     border.width: 1
     border.color: Qt.alpha(root.markerBase, 0.6)

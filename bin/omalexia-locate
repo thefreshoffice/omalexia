@@ -329,6 +329,17 @@ def _tty_size(pid):
     return rows, cols
 
 
+# A terminal cell is taller than its glyphs: it carries the line's leading,
+# split above and below the letters, with the baseline low in the cell. A
+# highlight that fills the whole cell therefore floats above and around the
+# text, worse the smaller the font (the leading is a larger share). These
+# fractions carve the glyph band out of the cell: skip the top leading and
+# a little of the descender space, keeping the box on the letters. They
+# scale with cell_h, so the highlight tracks the text size automatically.
+GLYPH_TOP = 0.18    # share of the cell trimmed off the top (leading + gap)
+GLYPH_BOTTOM = 0.10  # share trimmed off the bottom (descender slack)
+
+
 def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
     scale = window["scale"]
     pad_x *= scale
@@ -337,8 +348,11 @@ def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
     cell_h = (window["h"] * scale - 2 * pad_y) / rows
     if cell_w <= 2 or cell_h <= 4:
         return None
+    glyph_top = cell_h * GLYPH_TOP
+    glyph_h = cell_h * (1.0 - GLYPH_TOP - GLYPH_BOTTOM)
     return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
-            "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h}
+            "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h,
+            "glyph_top": glyph_top, "glyph_h": glyph_h}
 
 
 def _foot_pipe(window):
@@ -442,6 +456,7 @@ def foot_grid_words(window):
     if grid is None:
         return None
     cols, cell_w, cell_h = grid["cols"], grid["cell_w"], grid["cell_h"]
+    glyph_top, glyph_h = grid["glyph_top"], grid["glyph_h"]
     words = []
     row = 0
     for line in grid["lines"]:
@@ -452,9 +467,11 @@ def foot_grid_words(window):
                 continue
             row_offset, col = divmod(m.start(), cols)
             width_chars = min(m.end() - m.start(), cols - col)
+            # y and height cover the glyph band, not the whole cell, so the
+            # highlight hugs the letters at any text size.
             words.append((folded, grid["pad_x"] + col * cell_w,
-                          grid["pad_y"] + (row + row_offset) * cell_h,
-                          width_chars * cell_w, cell_h, m.group()))
+                          grid["pad_y"] + (row + row_offset) * cell_h + glyph_top,
+                          width_chars * cell_w, glyph_h, m.group()))
         row += max(1, -(-len(line) // cols))
     return words or None
 

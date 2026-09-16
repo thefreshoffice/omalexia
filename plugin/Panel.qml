@@ -46,18 +46,18 @@ Panel {
   readonly property var rows: {
     var keys = ["hero"]
     if (!omalexia.installed) return keys.concat(["install"])
-    keys.push("read.actions", "read.speed")
+    keys.push("read.actions")
+    if (omalexia.speaking) keys.push("read.stop")
+    keys.push("read.speed")
     var voiceLangs = read.languages || []
     for (var i = 0; i < voiceLangs.length; i++) keys.push("read.voice." + String(voiceLangs[i].code))
     keys.push("read.language", "read.highlight")
-    if (String(read.highlightMode || "text") === "text") keys.push("read.style")
     if (String(read.highlightMode || "text") !== "off") keys.push("read.timing")
-    keys.push("read.test")
     if (showDictation) {
-      if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback", "dict.showTyped")
+      if (dictationInstalled) keys.push("dict.actions", "dict.engine", "dict.feedback")
       else keys.push("dict.install")
     }
-    if (showLook) keys.push("look.actions", "look.narrow", "look.tint", "look.motion", "look.font", "look.size")
+    if (showLook) keys.push("look.layout", "look.comfort", "look.font", "look.size")
     keys.push("footer")
     return keys
   }
@@ -67,9 +67,9 @@ Panel {
   function actionHasCursor(key, index) { return hasCursor(key) && actionIndex === index }
 
   function actionCount(key) {
-    if (key === "read.actions") return 5
-    if (key === "read.test") return 2
+    if (key === "read.actions") return 4
     if (key === "dict.actions") return 4
+    if (key === "look.layout" || key === "look.comfort") return 2
     if (key === "footer") return 3
     return 1
   }
@@ -117,11 +117,12 @@ Panel {
       var voiceEntry = languageEntry(voiceCode)
       if (voiceEntry) chooseVoice(voiceCode, cycleOption(voiceOptionsFor(voiceEntry), voiceValueFor(voiceEntry), dx))
     } else if (key === "read.language") {
-      omalexia.set("language", cycleOption(languageOptions, read.language, dx))
+      var cycleable = languageOptions.filter(function(o) { return String(o.value) !== "add" })
+      omalexia.set("language", cycleOption(cycleable, read.language, dx))
     } else if (key === "read.highlight") {
-      omalexia.set("highlight", cycleOption(highlightOptions, read.highlightMode || "text", dx))
-    } else if (key === "read.style") {
-      omalexia.set("highlightStyle", cycleOption(styleOptions, read.highlightStyle || "word", dx))
+      chooseHighlight(cycleOption(highlightOptions, highlightValue, dx))
+    } else if (key === "dict.feedback") {
+      chooseFeedback(cycleOption(feedbackOptions, feedbackValue, dx))
     } else if (key === "read.timing") {
       var delay = Math.max(-0.3, Math.min(1.5, Number(read.highlightDelay || 0.15) + dx * 0.05))
       omalexia.set("highlightDelay", delay.toFixed(2))
@@ -151,16 +152,11 @@ Panel {
       if (actionIndex === 0) omalexia.readSelection()
       else if (actionIndex === 1) { root.close(); omalexia.act("pointer") }
       else if (actionIndex === 2) omalexia.readClipboard()
-      else if (actionIndex === 3) { root.close(); omalexia.readScreen() }
-      else omalexia.stopReading()
+      else { root.close(); omalexia.readScreen() }
       break
-    case "read.test":
-      if (actionIndex === 0) omalexia.testVoice(testLanguage())
-      else omalexia.act("add-language")
-      break
+    case "read.stop": omalexia.stopReading(); break
     case "read.language": languageDropdown.toggle(); break
     case "read.highlight": highlightDropdown.toggle(); break
-    case "read.style": styleDropdown.toggle(); break
     case "dict.actions":
       if (actionIndex === 0) omalexia.toggleDictation()
       else if (actionIndex === 1) omalexia.cancelDictation()
@@ -169,12 +165,15 @@ Panel {
       break
     case "dict.install": omalexia.act("dictation-install"); break
     case "dict.engine": engineDropdown.toggle(); break
-    case "dict.feedback": omalexia.set("feedback", dictation.feedback ? "false" : "true"); break
-    case "dict.showTyped": omalexia.set("showTyped", dictation.showTyped ? "false" : "true"); break
-    case "look.actions": root.close(); omalexia.toggleReadingMode(); break
-    case "look.narrow": omalexia.set("narrowSingleWindow", look.narrowSingleWindow ? "false" : "true"); break
-    case "look.tint": omalexia.set("tint", look.tint ? "false" : "true"); break
-    case "look.motion": omalexia.set("reducedMotion", look.reducedMotion ? "false" : "true"); break
+    case "dict.feedback": feedbackDropdown.toggle(); break
+    case "look.layout":
+      if (actionIndex === 0) { root.close(); omalexia.toggleReadingMode() }
+      else omalexia.set("narrowSingleWindow", look.narrowSingleWindow ? "false" : "true")
+      break
+    case "look.comfort":
+      if (actionIndex === 0) omalexia.set("tint", look.tint ? "false" : "true")
+      else omalexia.set("reducedMotion", look.reducedMotion ? "false" : "true")
+      break
     case "look.font": fontDropdown.toggle(); break
     case "look.size": sizeDropdown.toggle(); break
     case "footer":
@@ -214,24 +213,53 @@ Panel {
   readonly property var languageOptions: {
     // The daemon reads any language with an enabled voice; the options come
     // from the config via status.py so `omalexia voice add de` shows up here.
+    // "Add a language" lives at the bottom of this dropdown instead of on a
+    // button row of its own.
     var fromStatus = read.languageOptions || []
-    if (fromStatus.length > 1) return fromStatus
-    return [
+    var base = fromStatus.length > 1 ? fromStatus.slice() : [
       { value: "auto", label: "Detect from the text" },
       { value: "en", label: "English" },
       { value: "nl", label: "Nederlands" }
     ]
+    base.push({ value: "add", label: "+ Add a language" })
+    return base
   }
+  // One dropdown covers what used to be three rows: where the read-along
+  // marker lives (text / subtitle bar / off) and, in the text, what it marks.
   readonly property var highlightOptions: [
-    { value: "text", label: "In the text being read" },
-    { value: "bar", label: "Subtitle bar at the bottom" },
-    { value: "off", label: "Off" }
-  ]
-  readonly property var styleOptions: [
+    { value: "off", label: "Off" },
     { value: "word", label: "The word being spoken" },
     { value: "sentence", label: "The whole sentence" },
-    { value: "both", label: "Sentence and word together" }
+    { value: "both", label: "Sentence and word together" },
+    { value: "bar", label: "Subtitle bar at the bottom" }
   ]
+  readonly property string highlightValue: {
+    var mode = String(read.highlightMode || "text")
+    if (mode === "off" || mode === "bar") return mode
+    return String(read.highlightStyle || "word")
+  }
+  function chooseHighlight(v) {
+    if (v === "off" || v === "bar") { omalexia.set("highlight", v); return }
+    if (String(read.highlightMode || "text") !== "text") omalexia.set("highlight", "text")
+    omalexia.set("highlightStyle", v)
+  }
+  // The two dictation feedback switches (tick sound, typed-text
+  // notification) collapse into one choice.
+  readonly property var feedbackOptions: [
+    { value: "both", label: "Tick and notification" },
+    { value: "sound", label: "Tick when it starts and stops" },
+    { value: "notify", label: "Notification with the text" },
+    { value: "off", label: "Quiet" }
+  ]
+  readonly property string feedbackValue: {
+    var s = dictation.feedback === true
+    var n = dictation.showTyped === true
+    return s && n ? "both" : (s ? "sound" : (n ? "notify" : "off"))
+  }
+  function chooseFeedback(v) {
+    omalexia.set("feedback", (v === "both" || v === "sound") ? "true" : "false")
+    omalexia.set("showTyped", (v === "both" || v === "notify") ? "true" : "false")
+  }
   readonly property var sizeOptions: [
     { value: "12", label: "Normal (12)" },
     { value: "14", label: "Comfortable (14)" },
@@ -335,7 +363,7 @@ Panel {
     open: root.opened
     focusTarget: keyCatcher
     contentWidth: panel.fittedContentWidth(Style.space(400))
-    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(860))
+    contentHeight: panel.fittedContentHeight(column.implicitHeight, Style.space(1040))
 
     PanelKeyCatcher {
       id: keyCatcher
@@ -370,7 +398,7 @@ Panel {
         Column {
           id: column
           width: panelFlick.width
-          spacing: Style.space(12)
+          spacing: Style.space(10)
 
           // ---- hero ---------------------------------------------------------
 
@@ -452,23 +480,31 @@ Panel {
 
             PanelSectionHeader { text: "READ ALOUD"; foreground: root.foreground; fontFamily: root.fontFamily }
 
+            // Four sources fit the row; five clipped. Stop gets a row of its
+            // own below, present only while something is actually playing.
             ActionRow {
               rowKey: "read.actions"
               uniform: true
               buttons: [
                 { icon: "󰗊", text: "Selection", tip: "Read the highlighted text (F10)" },
-                { icon: "󰇀", text: "From here", tip: "Read from the word under the mouse pointer (Alt+F10)" },
+                { icon: "󰇀", text: "Pointer", tip: "Read from the word under the mouse pointer (Alt+F10)" },
                 { icon: "󰅍", text: "Clipboard", tip: "Read the clipboard (Shift+F10)" },
-                { icon: "󰴑", text: "Screen", tip: "Draw a box and read what is in it (Ctrl+F10)" },
-                { icon: "󰝛", text: "Stop", tip: "Stop reading", enabled: omalexia.speaking }
+                { icon: "󰴑", text: "Screen", tip: "Draw a box and read what is in it (Ctrl+F10)" }
               ]
               onTriggered: function(index) {
                 if (index === 0) omalexia.readSelection()
                 else if (index === 1) { root.close(); omalexia.act("pointer") }
                 else if (index === 2) omalexia.readClipboard()
-                else if (index === 3) { root.close(); omalexia.readScreen() }
-                else omalexia.stopReading()
+                else { root.close(); omalexia.readScreen() }
               }
+            }
+
+            ActionRow {
+              visible: omalexia.speaking
+              rowKey: "read.stop"
+              uniform: true
+              buttons: [{ icon: "󰝛", text: "Stop reading", tip: "Stop (or press F10)" }]
+              onTriggered: function(index) { omalexia.stopReading() }
             }
 
             SliderRow {
@@ -483,8 +519,8 @@ Panel {
               onCommitted: function(v) { omalexia.set("speed", v.toFixed(1)) }
             }
 
-            // One voice row per enabled language; `omalexia voice add`
-            // (the button below) grows this list.
+            // One voice row per enabled language, each with its own play
+            // button so a voice can be auditioned in that language directly.
             Repeater {
               model: root.read.languages || []
               DropdownRow {
@@ -493,6 +529,9 @@ Panel {
                 label: "Voice · " + String(modelData.name || modelData.code)
                 options: root.voiceOptionsFor(modelData)
                 current: root.voiceValueFor(modelData)
+                trailingIcon: "󰐊"
+                trailingTip: "Hear this voice"
+                onTrailingClicked: omalexia.testVoice(String(modelData.code))
                 onChosen: function(v) { root.chooseVoice(String(modelData.code), v) }
               }
             }
@@ -503,26 +542,19 @@ Panel {
               label: "Read in"
               options: root.languageOptions
               current: String(root.read.language || "auto")
-              onChosen: function(v) { omalexia.set("language", v) }
+              onChosen: function(v) {
+                if (v === "add") omalexia.act("add-language")
+                else omalexia.set("language", v)
+              }
             }
 
             DropdownRow {
               id: highlightDropdown
               rowKey: "read.highlight"
-              label: "Highlight words"
+              label: "Read-along highlight"
               options: root.highlightOptions
-              current: String(root.read.highlightMode || "text")
-              onChosen: function(v) { omalexia.set("highlight", v) }
-            }
-
-            DropdownRow {
-              id: styleDropdown
-              visible: String(root.read.highlightMode || "text") === "text"
-              rowKey: "read.style"
-              label: "Highlight style"
-              options: root.styleOptions
-              current: String(root.read.highlightStyle || "word")
-              onChosen: function(v) { omalexia.set("highlightStyle", v) }
+              current: root.highlightValue
+              onChosen: function(v) { root.chooseHighlight(v) }
             }
 
             // Sync knob for what the ear actually hears: wireless
@@ -540,19 +572,6 @@ Panel {
               maximum: 1.5
               step: 0.05
               onCommitted: function(v) { omalexia.set("highlightDelay", v.toFixed(2)) }
-            }
-
-            ActionRow {
-              rowKey: "read.test"
-              uniform: true
-              buttons: [
-                { icon: "󰙃", text: "Test the voice", tip: "Say a sentence with the current voice" },
-                { icon: "󰗊", text: "Add a language", tip: "Enable another reading language (downloads a voice)" }
-              ]
-              onTriggered: function(index) {
-                if (index === 0) omalexia.testVoice(root.testLanguage())
-                else omalexia.act("add-language")
-              }
             }
           }
 
@@ -626,22 +645,14 @@ Panel {
               wrapMode: Text.WordWrap
             }
 
-            ToggleRow {
+            DropdownRow {
+              id: feedbackDropdown
               visible: root.dictationInstalled
               rowKey: "dict.feedback"
-              label: "Sound when recording starts and stops"
-              description: "A short tick you can hear without looking."
-              checked: root.dictation.feedback === true
-              onFlipped: function(next) { omalexia.set("feedback", next ? "true" : "false") }
-            }
-
-            ToggleRow {
-              visible: root.dictationInstalled
-              rowKey: "dict.showTyped"
-              label: "Show what was typed"
-              description: "A notification with the transcribed text."
-              checked: root.dictation.showTyped === true
-              onFlipped: function(next) { omalexia.set("showTyped", next ? "true" : "false") }
+              label: "Feedback while dictating"
+              options: root.feedbackOptions
+              current: root.feedbackValue
+              onChosen: function(v) { root.chooseFeedback(v) }
             }
           }
 
@@ -656,37 +667,31 @@ Panel {
 
             PanelSectionHeader { text: "LOOK"; foreground: root.foreground; fontFamily: root.fontFamily }
 
-            ActionRow {
-              rowKey: "look.actions"
-              uniform: true
-              buttons: [
-                { icon: "󰖲", text: root.look.readingMode === true ? "Tile window" : "Reading mode", tip: "One clean reading window; the rest tucks away (Super+R)" }
+            // The four look switches sit two to a row; what each does moved
+            // from description lines into the keys page, which halves the
+            // section's height.
+            PairRow {
+              rowKey: "look.layout"
+              items: [
+                { label: "Reading mode", checked: root.look.readingMode === true },
+                { label: "Narrow window", checked: root.look.narrowSingleWindow === true }
               ]
-              onTriggered: function(index) { root.close(); omalexia.toggleReadingMode() }
+              onFlipped: function(index, next) {
+                if (index === 0) { root.close(); omalexia.toggleReadingMode() }
+                else omalexia.set("narrowSingleWindow", next ? "true" : "false")
+              }
             }
 
-            ToggleRow {
-              rowKey: "look.narrow"
-              label: "Narrow single window"
-              description: "A lone window stays square-ish on a wide monitor (Super+Ctrl+Backspace)."
-              checked: root.look.narrowSingleWindow === true
-              onFlipped: function(next) { omalexia.set("narrowSingleWindow", next ? "true" : "false") }
-            }
-
-            ToggleRow {
-              rowKey: "look.tint"
-              label: "Paper tint"
-              description: "Warm the whole screen like cream paper (Super+Shift+R)."
-              checked: root.look.tint === true
-              onFlipped: function(next) { omalexia.set("tint", next ? "true" : "false") }
-            }
-
-            ToggleRow {
-              rowKey: "look.motion"
-              label: "Reduced motion"
-              description: "No window animations."
-              checked: root.look.reducedMotion === true
-              onFlipped: function(next) { omalexia.set("reducedMotion", next ? "true" : "false") }
+            PairRow {
+              rowKey: "look.comfort"
+              items: [
+                { label: "Paper tint", checked: root.look.tint === true },
+                { label: "Reduced motion", checked: root.look.reducedMotion === true }
+              ]
+              onFlipped: function(index, next) {
+                if (index === 0) omalexia.set("tint", next ? "true" : "false")
+                else omalexia.set("reducedMotion", next ? "true" : "false")
+              }
             }
 
             DropdownRow {
@@ -881,14 +886,19 @@ Panel {
   }
 
   // Label + themed dropdown. `current` is re-applied by a Binding so a
-  // background refresh wins over whatever the popup last selected.
+  // background refresh wins over whatever the popup last selected. An
+  // optional trailing icon button sits beside the field (the voice rows use
+  // it to audition the chosen voice).
   component DropdownRow: Item {
     id: dropdownRow
     property string rowKey: ""
     property string label: ""
     property var options: []
     property string current: ""
+    property string trailingIcon: ""
+    property string trailingTip: ""
     signal chosen(string value)
+    signal trailingClicked()
 
     function toggle() { dropdown.toggle() }
 
@@ -900,7 +910,9 @@ Panel {
 
     Dropdown {
       id: dropdown
-      width: parent.width
+      width: dropdownRow.trailingIcon !== ""
+             ? parent.width - trailingButton.width - Style.space(6)
+             : parent.width
       label: dropdownRow.label
       options: dropdownRow.options
       foreground: root.foreground
@@ -911,6 +923,19 @@ Panel {
       onChanged: function(v) { if (v !== dropdownRow.current) dropdownRow.chosen(v) }
     }
 
+    Button {
+      id: trailingButton
+      visible: dropdownRow.trailingIcon !== ""
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      iconText: dropdownRow.trailingIcon
+      tooltipText: dropdownRow.trailingTip
+      bordered: true
+      foreground: root.foreground
+      fontFamily: root.fontFamily
+      onClicked: dropdownRow.trailingClicked()
+    }
+
     Binding {
       target: dropdown
       property: "value"
@@ -918,18 +943,38 @@ Panel {
     }
   }
 
-  // Labeled on/off row.
-  component ToggleRow: Toggle {
-    id: toggleRow
+  // Two labeled switches side by side; h/l walks between them.
+  component PairRow: Item {
+    id: pairRow
     property string rowKey: ""
-    signal flipped(bool next)
+    property var items: []
+    signal flipped(int index, bool next)
 
     width: parent ? parent.width : implicitWidth
-    foreground: root.foreground
-    fontFamily: root.fontFamily
-    hasCursor: root.hasCursor(rowKey)
-    Component.onCompleted: root.registerRow(rowKey, toggleRow)
-    onHovered: function(on) { if (on) root.setCursor(toggleRow.rowKey) }
-    onClicked: toggleRow.flipped(!toggleRow.checked)
+    implicitHeight: pairFlow.implicitHeight
+    Component.onCompleted: root.registerRow(rowKey, pairRow)
+
+    Row {
+      id: pairFlow
+      width: parent.width
+      spacing: Style.space(6)
+
+      Repeater {
+        model: pairRow.items
+        Toggle {
+          required property var modelData
+          required property int index
+          width: (pairFlow.width - pairFlow.spacing) / 2
+          label: String(modelData.label || "")
+          description: ""
+          checked: modelData.checked === true
+          foreground: root.foreground
+          fontFamily: root.fontFamily
+          hasCursor: root.actionHasCursor(pairRow.rowKey, index)
+          onHovered: function(on) { if (on) root.setCursor(pairRow.rowKey, index) }
+          onClicked: pairRow.flipped(index, !checked)
+        }
+      }
+    }
   }
 }

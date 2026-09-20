@@ -390,3 +390,30 @@ re-run the on-machine RTF + listening protocol. If it holds, Supertonic
 on the iGPU/NPU becomes the recommended default engine and the
 `omalexia voice advise` ranking is updated to prefer it where OpenVINO
 is present.
+
+### Spike result on the reference laptop (2026-09-20)
+
+Tried the drop-in path: `onnxruntime-openvino` in an isolated venv, the stock
+Supertonic 3 ONNX models, providers swapped per model. Same three Dutch
+texts as the on-machine table above. No sudo was needed for the iGPU; the
+NPU needs a driver that is not installed.
+
+| Path                                    | RTF kort / middel / alinea | Notes |
+| ---                                     | ---                        | ---   |
+| CPU (onnxruntime CPU EP)                | 0.62 / 0.45 / 0.31         | matches our earlier Supertonic CPU numbers |
+| OpenVINO, whole model (CPU/iGPU/NPU)    | fails                      | dynamic-shape Reshape in the sentence encoder's attention aborts inference |
+| OpenVINO iGPU, heavy models only        | 0.33 / 0.25 / 0.28         | vector_estimator + vocoder on the iGPU, encoder + duration on CPU; ~1.8x on short/medium, load 1.7 s warm-cache (12.7 s first compile) |
+| OpenVINO NPU                            | unavailable                | "Device NPU is not available": the OpenVINO NPU plugin / intel-npu-driver is not installed |
+
+Honest conclusion: omaspeak's 10 to 25x (iGPU RTF 0.034, NPU 0.017) is **not**
+reproducible by pointing onnxruntime-openvino at the stock ONNX. Those numbers
+come from OpenVINO-optimized, statically shaped models. Two walls sit in the
+way here: the encoder's dynamic Reshape breaks the OpenVINO EP (so only the
+heavy half can be offloaded, which yields ~1.8x, not 10x+), and the NPU needs
+a driver install. Getting near omaspeak means real work: install the NPU
+driver (sudo), convert the Supertonic models to OpenVINO IR with static or
+bucketed shapes, and fix or bypass the encoder reshape, i.e. reproduce what
+Supertone/omaspeak ship rather than reuse the pip ONNX. Worth doing for a fast
+high-quality default, but it is a project, not a config switch. The shipped
+CPU Supertonic (RTF ~0.4) plus the first-sentence-split latency fix remain the
+practical default until then.

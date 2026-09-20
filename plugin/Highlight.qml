@@ -50,9 +50,46 @@ PanelWindow {
     right: true
   }
 
-  // A themed accent works as a marker only when it actually has a hue;
-  // grayscale themes get a classic highlighter yellow instead.
-  readonly property color markerBase: Color.accent.hslSaturation > 0.35 ? Color.accent : "#f2c744"
+  // ---- theme colour with a readability guard ---------------------------
+  // The highlight wears the Omarchy theme's accent, but two things must hold
+  // whatever theme is loaded: the mark has to stand out from the background
+  // it sits on (or you cannot see it), and the text under it has to stay
+  // readable. Relative luminance and WCAG contrast ratios decide both.
+  function _lin(x) { return x <= 0.03928 ? x / 12.92 : Math.pow((x + 0.055) / 1.055, 2.4); }
+  function relLum(c) { return 0.2126 * _lin(c.r) + 0.7152 * _lin(c.g) + 0.0722 * _lin(c.b); }
+  function contrast(a, b) {
+    var l1 = relLum(a) + 0.05, l2 = relLum(b) + 0.05;
+    return l1 > l2 ? l1 / l2 : l2 / l1;
+  }
+
+  readonly property color themeBg: bar && bar.background ? bar.background : Color.background
+  readonly property color themeFg: bar && bar.foreground ? bar.foreground : Color.foreground
+
+  // Marker colour: the accent's hue, its lightness nudged away from the
+  // background until the mark is clearly visible; a greyscale accent carries
+  // no sense of "highlight", so fall back to a warm highlighter yellow.
+  readonly property color markerBase: {
+    var hued = Color.accent.hslSaturation > 0.15;
+    var h = hued ? Color.accent.hslHue : 0.13;
+    var s = hued ? Math.min(0.85, Math.max(0.5, Color.accent.hslSaturation)) : 0.85;
+    var l = hued ? Color.accent.hslLightness : 0.55;
+    var cand = Qt.hsla(h, s, l, 1);
+    var bgDark = relLum(themeBg) < 0.35;
+    for (var i = 0; i < 12 && contrast(cand, themeBg) < 2.4; i++) {
+      l = bgDark ? Math.min(0.82, l + 0.05) : Math.max(0.30, l - 0.05);
+      cand = Qt.hsla(h, s, l, 1);
+    }
+    return cand;
+  }
+
+  // Fill alpha: the pill is drawn over the text, so the text keeps about
+  // (1 - alpha) of its original contrast. Keep it low enough that the text
+  // stays legible on any theme, and lower still when the mark's own colour
+  // is close to the text colour (where a heavier wash would muddy it most).
+  readonly property real markerAlpha: contrast(markerBase, themeFg) < 1.6 ? 0.22 : 0.30
+  // The more readable of the theme's two inks to print on the mark itself.
+  readonly property color markerInk: contrast(markerBase, themeBg) >= contrast(markerBase, themeFg)
+                                     ? themeBg : themeFg
 
   // The pill sits a touch proud of the letters. That margin and the corner
   // radius scale with the box height, so a small font gets a small, snug
@@ -78,7 +115,8 @@ PanelWindow {
       width: modelData.x1 - modelData.x0 + 2 * root.padX(modelData.h)
       height: modelData.h + 2 * root.padY(modelData.h)
       radius: root.pill(modelData.h)
-      color: Qt.alpha(root.markerBase, root.style === "sentence" ? 0.26 : 0.12)
+      color: Qt.alpha(root.markerBase, root.style === "sentence" ? root.markerAlpha * 0.8
+                                                                  : root.markerAlpha * 0.38)
       border.width: root.style === "sentence" ? 1 : 0
       border.color: Qt.alpha(root.markerBase, 0.5)
     }
@@ -98,9 +136,9 @@ PanelWindow {
     width: root.lastBox ? root.lastBox.w + 2 * root.padX(root.lastBox.h) : 0
     height: root.lastBox ? root.lastBox.h + 2 * root.padY(root.lastBox.h) : 0
     radius: root.lastBox ? root.pill(root.lastBox.h) : 0
-    color: Qt.alpha(root.markerBase, 0.32)
+    color: Qt.alpha(root.markerBase, root.markerAlpha)
     border.width: 1
-    border.color: Qt.alpha(root.markerBase, 0.6)
+    border.color: Qt.alpha(root.markerBase, 0.7)
 
     // Glide between words; appear and vanish with a soft fade rather than
     // a pop. Size snaps instantly: a pill that stretches while it moves
@@ -171,7 +209,7 @@ PanelWindow {
           Rectangle {
             anchors.fill: parent
             radius: Style.space(5)
-            color: Color.accent
+            color: root.markerBase
             visible: wordCell.active
           }
 
@@ -179,7 +217,8 @@ PanelWindow {
             id: wordText
             anchors.centerIn: parent
             text: wordCell.modelData.text
-            color: wordCell.active ? root.cardBackground : root.textColor
+            // Print the spoken word in whichever ink reads on the mark.
+            color: wordCell.active ? root.markerInk : root.textColor
             font.family: root.readingFont
             font.pixelSize: root.textPx
           }

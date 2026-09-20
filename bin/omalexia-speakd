@@ -48,6 +48,7 @@ from pathlib import Path
 HOME = Path.home()
 RUNTIME = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}") / "omalexia"
 SOCKET_PATH = RUNTIME / "speakd.sock"
+DEBUG_LAT = os.environ.get("OMALEXIA_DEBUG_LAT") == "1"
 STATE_PATH = RUNTIME / "state"
 CONFIG_PATH = Path(os.environ.get("XDG_CONFIG_HOME") or HOME / ".config") / "omalexia" / "config.toml"
 STATE_HOME = Path(os.environ.get("XDG_STATE_HOME") or HOME / ".local" / "state") / "omalexia"
@@ -334,6 +335,38 @@ def split_sentences(text: str) -> list[tuple[str, bool]]:
     return result or [(text, False)]
 
 
+# The opening of an utterance is synthesized as a short head first, so the
+# voice starts almost at once instead of after the whole first sentence. The
+# rest streams behind it. Only the very first sentence is split, and only
+# when it is long enough that the wait would be felt.
+FIRST_HEAD_MIN = 16   # do not split a first sentence shorter than this
+FIRST_HEAD_MAX = 36   # look no further than this for a split point
+
+
+def split_first_head(sentence: str) -> tuple[str, str]:
+    """(head, tail) for the opening sentence: a short head that synthesizes
+    fast, and the remainder. head + tail == sentence, so char offsets and the
+    word highlight stay exact. Returns (sentence, "") when not worth splitting."""
+    if len(sentence) < FIRST_HEAD_MIN:
+        return sentence, ""
+    window = sentence[:FIRST_HEAD_MAX]
+    # Prefer a natural clause boundary; a comma, dash or colon is where the
+    # voice would pause anyway, so the seam is inaudible.
+    best = -1
+    for i, ch in enumerate(window):
+        if i >= FIRST_HEAD_MIN - 6 and (ch in ",;:" or (ch == "-" and 0 < i < len(window) - 1 and window[i - 1] == " ")):
+            best = i + 1
+            break
+    if best < 0:
+        # No clause break: split at the first word boundary past the minimum.
+        space = sentence.find(" ", FIRST_HEAD_MIN)
+        if 0 < space <= FIRST_HEAD_MAX:
+            best = space
+    if best <= 0 or best >= len(sentence):
+        return sentence, ""
+    return sentence[:best], sentence[best:]
+
+
 # A deliberate breath at every paragraph boundary; without it a flattened
 # article rushes from one topic into the next.
 PARAGRAPH_GAP_MS = 320
@@ -456,8 +489,15 @@ def schedule_words(events: "queue.Queue", uid: int, sentence: str, offset: int,
 # --------------------------------------------------------------------------
 
 
+# start_lead: seconds of audio to bank before the first byte plays. It is the
+# head start that keeps a given engine gap-free, set from how much its
+# per-sentence synth time varies: Piper is quick and steady so it needs
+# almost none, the neural workers spike more per call and need a cushion. The
+# adaptive check in _run raises it further if the engine turns out slower than
+# real time. Smaller means the voice starts sooner.
 class PiperEngine:
     name = "piper"
+    start_lead = 0.3
 
     def __init__(self, voice_name: str):
         from piper import PiperVoice  # imported lazily so --help works without it
@@ -534,6 +574,7 @@ class KokoroEngine:
     (its venv has Python 3.12 and its own onnxruntime)."""
 
     name = "kokoro"
+    start_lead = 0.5
     gap_ms = 80  # per-sentence calls lose the ~0.21 s pause the model renders
 
     def __init__(self, voice: str, lang: str = "en"):
@@ -670,6 +711,7 @@ class WorkerEngine:
 class SupertonicEngine(WorkerEngine):
     """Supertonic 3 (99M flow matching, 31 languages, real time on CPU)."""
 
+    start_lead = 0.9
     name = "supertonic"
     directory = SUPERTONIC_DIR
     default_rate = 44100
@@ -682,6 +724,7 @@ class OmniVoiceEngine(WorkerEngine):
     name = "omnivoice"
     directory = OMNIVOICE_DIR
     default_rate = 24000
+    start_lead = 1.4
     gap_ms = 60
 
 
@@ -1040,9 +1083,10 @@ class Daemon:
             lead_max = 4.0  # buffer this far ahead; also the ceiling on how
                             # long a mid-text speed change can take to apply
             pending: list[bytes] = []
-            prebuffer = 1.5   # seconds in hand before the first byte plays: a
-                              # short first sentence no longer runs dry while
-                              # the second one is still synthesizing
+            # Seconds in hand before the first byte plays. Per engine, sized to
+            # its per-sentence timing variance so playback never runs dry, but
+            # no larger, so the voice starts as soon as that engine safely can.
+            prebuffer = getattr(engine, "start_lead", 0.5)
             hold_max = 16.0   # ceiling on the head start a slow engine banks
             hold = {"target": prebuffer}  # raised when the engine cannot keep up
 
@@ -1108,7 +1152,17 @@ class Daemon:
             lang = self.current.get("lang", "")
             self.emit({"event": "start", "id": uid, "lang": lang, "chars": len(text)})
 
-            sentences = split_sentences(text)
+            # (sentence, starts_paragraph, continues_previous). "continues"
+            # marks the tail of a split as belonging to the same sentence as
+            # the chunk before it, so no seam pause is inserted between them.
+            sentences = [(s, np, False) for s, np in split_sentences(text)]
+            # Split the opening sentence into a fast head + the rest, so the
+            # first word is heard sooner and the rest streams behind it.
+            if sentences:
+                s0, np0, _ = sentences[0]
+                head, tail = split_first_head(s0)
+                if tail:
+                    sentences = [(head, np0, False), (tail, False, True)] + sentences[1:]
 
             # The engine runs in its own thread and synthesizes continuously
             # ahead into a bounded queue, so it never sits idle while the
@@ -1120,7 +1174,7 @@ class Daemon:
 
             def produce():
                 pos = 0
-                for index, (sentence, new_paragraph) in enumerate(sentences):
+                for index, (sentence, new_paragraph, continues) in enumerate(sentences):
                     if cancel.is_set():
                         break
                     offset = text.find(sentence, pos)
@@ -1138,7 +1192,7 @@ class Daemon:
                     wall = time.monotonic() - t0
                     if cancel.is_set():
                         break
-                    item = (index, sentence, offset, new_paragraph, pcm,
+                    item = (index, sentence, offset, new_paragraph, continues, pcm,
                             engine_speed, wall)
                     while not cancel.is_set():
                         try:
@@ -1166,21 +1220,22 @@ class Daemon:
             synth_wall = 0.0   # engine wall time spent so far
             audio_wall = 0.0   # playback seconds produced so far
             chars_done = 0
-            total_chars = max(1, sum(len(s) for s, _ in sentences))
+            total_chars = max(1, sum(len(s) for s, _, _ in sentences))
 
             while not cancel.is_set():
                 item = ready.get()
                 if item is None:
                     break
-                index, sentence, offset, new_paragraph, pcm, synth_speed, wall = item
+                index, sentence, offset, new_paragraph, continues, pcm, synth_speed, wall = item
                 if not pcm:
                     continue
                 now = speed if speed is not None else float(self.config["tts"]["speed"])
                 if last_speed is not None and now != last_speed:
                     log(f"speed {last_speed} -> {now} mid-utterance")
-                if last_speed is not None:
+                if last_speed is not None and not continues:
                     # The regular seam pause the engine loses to per-sentence
-                    # calls, plus a deliberate breath at a paragraph break.
+                    # calls, plus a deliberate breath at a paragraph break. A
+                    # split sentence's tail continues its head with no pause.
                     pause_ms = gap_ms + (PARAGRAPH_GAP_MS if new_paragraph else 0)
                     if pause_ms:
                         pause = b"\x00\x00" * int(engine.rate * pause_ms / 1000 / now)
@@ -1196,15 +1251,23 @@ class Daemon:
                 audio_wall += seconds
                 chars_done += len(sentence)
                 if clock["start"] is None and audio_wall > 0:
-                    # The engine needs (rtf - 1) extra seconds of head start
-                    # for every second of audio still to come; 0.9 leaves a
-                    # cushion for variance, chars estimate the remainder.
+                    # Only a genuinely slower-than-real-time engine needs a
+                    # head start; one that keeps up (rtf <= 1) can start after
+                    # the small pre-buffer and never runs dry, because the
+                    # producer stays ahead. Judge rtf only once there is enough
+                    # audio to measure it reliably, so a tiny opening head's
+                    # per-call overhead does not masquerade as a slow engine
+                    # and delay the very start we are trying to speed up.
                     rtf = synth_wall / audio_wall
-                    if rtf > 0.9:
+                    if audio_wall >= 0.8 and rtf > 1.0:
                         remaining = audio_wall * (total_chars / max(1, chars_done) - 1.0)
                         hold["target"] = min(
                             hold_max,
-                            max(hold["target"], (rtf - 0.9) * remaining + prebuffer))
+                            max(hold["target"], (rtf - 1.0) * remaining + prebuffer))
+                    if DEBUG_LAT:
+                        log(f"first-chunk head='{sentence[:18]}' wall={wall:.2f} "
+                            f"audio={seconds:.2f} rtf={rtf:.2f} hold={hold['target']:.2f} "
+                            f"queued={queued:.2f}")
                 if self.watchers:
                     schedule_words(events, uid, sentence, offset, index,
                                    len(sentences), queued, pcm, engine.rate, lang)

@@ -347,3 +347,46 @@ and the on-machine measurements:
 6. Rest of Europe: whatever wins for Dutch likely covers German,
    French, Spanish, Italian and Polish; verify per language with the
    same listening protocol instead of trusting tier labels.
+
+## What omaspeak teaches (2026-09-20)
+
+[omaspeak](https://github.com/jacob-vincent-mink/omaspeak) is a Rust
+local-first TTS CLI/daemon built on the same engine we front for Dutch,
+Supertonic 3. It confirms a few of our own choices (one warm model
+session, a supervised worker that isolates native crashes, PipeWire
+output, stop the player the moment the client exits) and it does NOT
+stream: it synthesizes a whole utterance to a WAV, so our sentence
+streaming plus first-sentence head split is ahead of it on latency.
+
+The valuable part is its benchmark, on hardware almost identical to the
+reference laptop (Intel Core Ultra, Arc iGPU, Intel NPU). Supertonic 3
+through OpenVINO is far faster than through the CPU GGUF path, and the
+iGPU and NPU are faster still (warm p50 synthesis / RTF):
+
+| Backend           | Warm synth | RTF    |
+| ---               | ---:       | ---:   |
+| audio.cpp GGUF CPU| 1658 ms    | 0.442  |
+| OpenVINO CPU      | 405 ms     | 0.103  |
+| OpenVINO iGPU     | 135 ms     | 0.0344 |
+| OpenVINO NPU      | 64 ms      | 0.0165 |
+
+Two conclusions for Omalexia:
+
+1. Run Supertonic through OpenVINO, not the CPU ONNX path we ship. On the
+   iGPU that is roughly RTF 0.03 and ~135 ms warm; on the NPU ~64 ms.
+   That would make Supertonic (already rated very good by ear) both the
+   fast AND the high-quality default, and would drop time-to-first-audio
+   to well under our current ~0.6 s even for the first sentence.
+2. It reopens the NPU, which the 2026-08-24 speech investigation had
+   written off. That conclusion was about Chatterbox's flow-matching
+   decoder; Supertonic's ONNX graph runs on the NPU through OpenVINO very
+   well (64 ms here). Worth a real spike.
+
+Spike plan (needs the OpenVINO user-space, a ~400 MB one-time sudo
+install already noted above): `pip install onnxruntime-openvino` in the
+Supertonic venv (or convert to OpenVINO IR), point the Supertonic worker
+at `OpenVINOExecutionProvider` with device GPU then NPU, FP16, and
+re-run the on-machine RTF + listening protocol. If it holds, Supertonic
+on the iGPU/NPU becomes the recommended default engine and the
+`omalexia voice advise` ranking is updated to prefer it where OpenVINO
+is present.

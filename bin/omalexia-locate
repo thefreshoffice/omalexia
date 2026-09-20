@@ -260,6 +260,28 @@ def to_gray(arr):
     return (arr.sum(axis=2, dtype=np.uint16) // 3).astype(np.uint8)
 
 
+def _line_pitch(boxes):
+    """Vertical spacing between consecutive text lines, from the box centres.
+    A word box may be a tight glyph (OCR), a full CSS line-box (browsers use
+    1.5 line-height), or a whole paragraph (a bad accessibility node); the
+    pitch is the honest line height that none of those individually give."""
+    hs = sorted(b["h"] for b in boxes if b["h"] > 2)
+    if not hs:
+        return 0.0
+    med_h = hs[len(hs) // 2]
+    centers = sorted(b["y"] + b["h"] / 2 for b in boxes)
+    rows = [[centers[0]]]
+    for c in centers[1:]:
+        if c - rows[-1][-1] > 0.6 * med_h:
+            rows.append([c])
+        else:
+            rows[-1].append(c)
+    row_centers = [sum(r) / len(r) for r in rows]
+    gaps = sorted(row_centers[i + 1] - row_centers[i]
+                  for i in range(len(row_centers) - 1))
+    return gaps[len(gaps) // 2] if gaps else med_h
+
+
 def to_layout(img_boxes, window):
     """Image-pixel boxes to layout coordinates, dropping boxes whose center
     left the window (scrolled out: their text is clipped away)."""
@@ -267,26 +289,31 @@ def to_layout(img_boxes, window):
     scale = window["scale"]
     height = window["h"] * scale
     width = window["w"] * scale
-    # Clamp any word box far taller than the line: the accessibility tree
-    # sometimes reports a wrapped paragraph as a single logical line, giving
-    # a word the whole paragraph's height, which draws as a marker several
-    # lines tall. The median box height is the true line height; cap to a
-    # little over it and keep the box centred on its word.
-    heights = sorted(b["h"] for b in img_boxes if b["h"] > 2)
-    line_h = heights[len(heights) // 2] if heights else 0
-    cap = line_h * 1.7 if line_h else 0
+    # A highlight box should be one line of text tall, centred on the line.
+    # Backends disagree on height: OCR gives tight glyph boxes, browsers give
+    # the full line-box (with its leading, so it bleeds into the line above
+    # and below), a stray accessibility node can give a whole paragraph. Cap
+    # every box to a fraction of the real line pitch, centred on the box, so
+    # none of them draws taller than one line. Boxes already shorter (tight
+    # OCR glyphs) are left alone.
+    pitch = _line_pitch(img_boxes)
+    cap = pitch * 0.74 if pitch else 0
     for b in img_boxes:
         cx = b["x"] + b["w"] / 2
-        cy = b["y"] + min(b["h"], cap or b["h"]) / 2
+        cy = b["y"] + b["h"] / 2
         if not (0 <= cx <= width and 0 <= cy <= height):
             continue
         bh, by = b["h"], b["y"]
         if cap and bh > cap:
-            # The oversized box starts at the word's own line and runs down
-            # over the rest of the paragraph, so keep its top and shrink to
-            # one line rather than recentring (which would drop the pill onto
-            # the wrong line).
-            bh = line_h
+            if bh <= pitch * 1.5:
+                # A single line-box (with its leading): its centre is the
+                # line's centre, so shrink around it.
+                by = cy - cap / 2
+            else:
+                # A multi-line node: the word is on its top line; centre the
+                # pill in that first line rather than the block's middle.
+                by = b["y"] + pitch / 2 - cap / 2
+            bh = cap
         out.append({
             "start": b["start"], "end": b["end"],
             "x": round(window["x"] + b["x"] / scale, 1),

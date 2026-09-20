@@ -345,19 +345,50 @@ def _tty_size(pid):
     return rows, cols
 
 
-# A terminal cell is taller than its glyphs and, crucially, the glyphs do
-# not sit in the middle of it: foot places the baseline high, so the text
-# rides in the upper part of the cell with most of the leading below it.
-# Measured on the shipped mono font, the visual centre of a line of prose
-# is about 0.38 of the way down the cell, not 0.5. These fractions carve
-# the glyph band out of the cell to match: a bigger trim off the bottom
-# than the top lifts the highlight onto the text instead of floating low.
-# They scale with cell_h, so the band tracks the text size automatically.
-GLYPH_TOP = 0.06     # share of the cell trimmed off the top
-GLYPH_BOTTOM = 0.28  # share trimmed off the bottom (the empty leading)
+# Fraction of the line pitch the highlight band covers, centred on the line.
+BAND_H = 0.74
+# Where a line's centre sits inside the cell when we cannot measure it: foot
+# places the baseline high, so prose rides in the upper cell (measured ~0.39
+# of the cell down, not 0.5). Used only as the fallback for the grab path.
+CENTER_FRAC = 0.40
 
 
-def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
+def _measure_line_grid(arr, rows, pad_y_guess, cell_h_guess):
+    """Find the terminal's real line pitch and the centre of row 0 from the
+    screenshot, so the highlight sits on the text however foot padded and
+    scaled the grid. Returns (pitch, center0) in image pixels, or None."""
+    if arr is None:
+        return None
+    try:
+        lum = arr.mean(axis=2) if arr.ndim == 3 else arr.astype(float)
+        h, w = lum.shape
+        bg = float(np.median(lum))
+        row_ink = (np.abs(lum - bg) > 40).sum(axis=1)
+        thr = max(3.0, 0.02 * w)
+        centers = []
+        start = None
+        for y in range(h):
+            if row_ink[y] > thr and start is None:
+                start = y
+            elif row_ink[y] <= thr and start is not None:
+                if 2 <= (y - start) <= cell_h_guess * 1.5:
+                    centers.append((start + y) / 2.0)
+                start = None
+        if len(centers) < 5:
+            return None
+        ys = np.array(centers)
+        guess0 = pad_y_guess + cell_h_guess / 2.0
+        rr = np.round((ys - guess0) / cell_h_guess)
+        A = np.vstack([rr, np.ones_like(rr)]).T
+        pitch, center0 = np.linalg.lstsq(A, ys, rcond=None)[0]
+        if not (0.5 * cell_h_guess < pitch < 2.0 * cell_h_guess):
+            return None
+        return float(pitch), float(center0)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _grid_dict(window, lines, rows, cols, pad_x, pad_y, arr=None):
     scale = window["scale"]
     pad_x *= scale
     pad_y *= scale
@@ -365,14 +396,17 @@ def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
     cell_h = (window["h"] * scale - 2 * pad_y) / rows
     if cell_w <= 2 or cell_h <= 4:
         return None
-    glyph_top = cell_h * GLYPH_TOP
-    glyph_h = cell_h * (1.0 - GLYPH_TOP - GLYPH_BOTTOM)
+    measured = _measure_line_grid(arr, rows, pad_y, cell_h)
+    if measured is not None:
+        pitch, line0 = measured           # exact: centre of row 0 on the text
+    else:
+        pitch, line0 = cell_h, pad_y + cell_h * CENTER_FRAC
     return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
             "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h,
-            "glyph_top": glyph_top, "glyph_h": glyph_h}
+            "pitch": pitch, "line0": line0}
 
 
-def _foot_pipe(window):
+def _foot_pipe(window, arr=None):
     """The visible text and grid geometry of a foot window (image pixels),
     or None when this is not a foot window or the binding is missing."""
     pid = window.get("pid")
@@ -400,7 +434,7 @@ def _foot_pipe(window):
         return None
 
     pad_x, pad_y = foot_pad()
-    return _grid_dict(window, visible.read_text().split("\n"), *size, pad_x, pad_y)
+    return _grid_dict(window, visible.read_text().split("\n"), *size, pad_x, pad_y, arr)
 
 
 # Ghostty ships a stock binding that writes the screen text to a temporary
@@ -422,7 +456,7 @@ def _ghostty_pad():
             float(my.group(1)) if my else 2.0)
 
 
-def _ghostty_pipe(window):
+def _ghostty_pipe(window, arr=None):
     pid = window.get("pid")
     if not pid or _proc_comm(pid) != "ghostty":
         return None
@@ -458,22 +492,23 @@ def _ghostty_pipe(window):
         return None
     dump.unlink(missing_ok=True)
     pad_x, pad_y = _ghostty_pad()
-    return _grid_dict(window, lines, *size, pad_x, pad_y)
+    return _grid_dict(window, lines, *size, pad_x, pad_y, arr)
 
 
-def _term_grid(window):
+def _term_grid(window, arr=None):
     """Whichever terminal grid the focused window offers."""
-    return _foot_pipe(window) or _ghostty_pipe(window)
+    return _foot_pipe(window, arr) or _ghostty_pipe(window, arr)
 
 
-def foot_grid_words(window):
+def foot_grid_words(window, arr=None):
     """(norm, x, y, w, h, original) image-pixel words of a terminal
     window's visible text (foot or ghostty), or None."""
-    grid = _term_grid(window)
+    grid = _term_grid(window, arr)
     if grid is None:
         return None
-    cols, cell_w, cell_h = grid["cols"], grid["cell_w"], grid["cell_h"]
-    glyph_top, glyph_h = grid["glyph_top"], grid["glyph_h"]
+    cols, cell_w = grid["cols"], grid["cell_w"]
+    pitch, line0 = grid["pitch"], grid["line0"]
+    box_h = pitch * BAND_H
     words = []
     row = 0
     for line in grid["lines"]:
@@ -484,11 +519,13 @@ def foot_grid_words(window):
                 continue
             row_offset, col = divmod(m.start(), cols)
             width_chars = min(m.end() - m.start(), cols - col)
-            # y and height cover the glyph band, not the whole cell, so the
-            # highlight hugs the letters at any text size.
+            # Centre the box on the line's measured centre, height a fraction
+            # of the pitch: the highlight sits on the text at any size, with
+            # no dependence on foot's padding or the font's baseline.
+            y_center = line0 + (row + row_offset) * pitch
             words.append((folded, grid["pad_x"] + col * cell_w,
-                          grid["pad_y"] + (row + row_offset) * cell_h + glyph_top,
-                          width_chars * cell_w, glyph_h, m.group()))
+                          y_center - box_h / 2,
+                          width_chars * cell_w, box_h, m.group()))
         row += max(1, -(-len(line) // cols))
     return words or None
 
@@ -1199,7 +1236,7 @@ def acquire(arr, window, spoken, sel_text, tess_lang, cursor_img_y, allow_ocr,
     only the fast cursor band ran and a full pass should upgrade it."""
     if try_grid and window is not None:
         t0 = time.time()
-        grid = foot_grid_words(window)
+        grid = foot_grid_words(window, arr)
         timings["grid"] = round(time.time() - t0, 2)
         if grid:
             boxes = strip_tags(drop_outliers(align(spoken, grid)))
@@ -1369,7 +1406,7 @@ def follow(uid, window, arr, spoken, sel_text, tess_lang, img_boxes, backend):
             if not window_focused(window["address"]):
                 calm += 1
                 continue  # keys must not land in some other window
-            words = foot_grid_words(window) if backend == "grid" else tree_words(window)
+            words = foot_grid_words(window, arr) if backend == "grid" else tree_words(window)
             if words:
                 grid_misses = 0
                 boxes2 = fill_gaps(strip_tags(drop_outliers(align(spoken, words))), spoken)

@@ -345,13 +345,16 @@ def _tty_size(pid):
     return rows, cols
 
 
-# A terminal cell is taller than its glyphs: it carries the line's leading,
-# split above and below the letters. A highlight that fills the whole cell
-# floats around the text, worse the smaller the font. This fraction is
-# trimmed off the top and the bottom equally, so the box is a shorter band
-# centred vertically in the cell, sitting square on the line of text. It
-# scales with cell_h, so the highlight tracks the text size automatically.
-GLYPH_TRIM = 0.14   # share of the cell trimmed off the top AND the bottom
+# A terminal cell is taller than its glyphs and, crucially, the glyphs do
+# not sit in the middle of it: foot places the baseline high, so the text
+# rides in the upper part of the cell with most of the leading below it.
+# Measured on the shipped mono font, the visual centre of a line of prose
+# is about 0.38 of the way down the cell, not 0.5. These fractions carve
+# the glyph band out of the cell to match: a bigger trim off the bottom
+# than the top lifts the highlight onto the text instead of floating low.
+# They scale with cell_h, so the band tracks the text size automatically.
+GLYPH_TOP = 0.06     # share of the cell trimmed off the top
+GLYPH_BOTTOM = 0.28  # share trimmed off the bottom (the empty leading)
 
 
 def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
@@ -362,8 +365,8 @@ def _grid_dict(window, lines, rows, cols, pad_x, pad_y):
     cell_h = (window["h"] * scale - 2 * pad_y) / rows
     if cell_w <= 2 or cell_h <= 4:
         return None
-    glyph_top = cell_h * GLYPH_TRIM
-    glyph_h = cell_h * (1.0 - 2 * GLYPH_TRIM)
+    glyph_top = cell_h * GLYPH_TOP
+    glyph_h = cell_h * (1.0 - GLYPH_TOP - GLYPH_BOTTOM)
     return {"lines": lines, "rows": rows, "cols": cols, "pad_x": pad_x,
             "pad_y": pad_y, "cell_w": cell_w, "cell_h": cell_h,
             "glyph_top": glyph_top, "glyph_h": glyph_h}
